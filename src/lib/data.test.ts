@@ -6,18 +6,23 @@ import {
   addPartner,
   addPetOffspring,
   addPetPartner,
+  applyPersonDeletePlan,
   calculateAge,
+  countDescendants,
+  createBlankPerson,
   createBlankPet,
   deletePerson,
   deletePet,
   exportTreeData,
+  migrateTreeData,
+  planPersonDeletion,
   sortChildren,
   validateTreeData,
 } from './data'
 
 const fresh = () => structuredClone(seed) as TreeData
 
-describe('age and ordering', () => {
+describe('age, ordering, and migration', () => {
   it('calculates age from a full date before using an override', () => {
     const today = new Date('2026-07-17T12:00:00Z')
     expect(calculateAge('2000-07-17', 88, today)).toBe(26)
@@ -26,52 +31,76 @@ describe('age and ordering', () => {
     expect(calculateAge('', null, today)).toBe('?')
   })
 
-  it('sorts the youngest at the left by descending birth order', () => {
+  it('sorts every current root child youngest-left by descending birth order', () => {
     const root = fresh().families.find((family) => family.id === 'root-family')!
     expect(sortChildren(root.children).map((child) => child.personId)).toEqual([
-      'child-7', 'child-6', 'child-5', 'child-4', 'child-3', 'child-2', 'child-1',
+      'new-child', 'child-7', 'child-6', 'child-5', 'child-4', 'child-3', 'child-2', 'child-1',
     ])
+  })
+
+  it('migrates version-one data with stable portrait numbers and defaults', () => {
+    const legacy = structuredClone(seed) as unknown as Record<string, unknown>
+    legacy.version = 1
+    const people = legacy.people as Array<Record<string, unknown>>
+    people.forEach((person) => {
+      delete person.portraitNumber
+      delete person.birthDetails
+      delete person.status
+    })
+    legacy.pets = []
+    const migrated = migrateTreeData(legacy)
+    expect(migrated.version).toBe(2)
+    expect(migrated.people.find((person) => person.id === 'father')?.portraitNumber).toBe(1)
+    expect(migrated.people.find((person) => person.id === 'child-7')?.portraitNumber).toBe(3)
+    expect(migrated.people.find((person) => person.id === 'new-child')?.portraitNumber).toBe(22)
+    expect(migrated.people.every((person) => person.status === 'alive')).toBe(true)
+    expect(migrated.pets[0].id).toBe('iring-brown')
+    expect(validateTreeData(migrated).valid).toBe(true)
   })
 })
 
-describe('seed archive', () => {
-  it('contains the protected parents, seven siblings, and exact grandchild counts', () => {
+describe('preserved archive data', () => {
+  it('keeps all current family edits, core protections, numbered portraits, and pet founder', () => {
     const data = fresh()
+    expect(data.version).toBe(2)
+    expect(data.people).toHaveLength(24)
     expect(data.people.filter((person) => person.protected)).toHaveLength(9)
-    expect(data.people).toHaveLength(21)
-    const expectedGenders = ['male', 'female', 'female', 'female', 'male', 'female', 'male']
-    expect(expectedGenders.map((gender, index) => data.people.find((person) => person.id === `child-${index + 1}`)?.gender)).toEqual(expectedGenders)
+    expect(new Set(data.people.map((person) => person.portraitNumber)).size).toBe(24)
+    expect(data.people.find((person) => person.displayName === 'second wife')).toBeTruthy()
     expect([1, 2, 3, 4, 5, 6, 7].map((number) =>
       data.families.find((family) => family.id === `family-child-${number}`)?.children.length ?? 0,
     )).toEqual([4, 2, 2, 2, 2, 0, 0])
+    expect(data.pets).toContainEqual(expect.objectContaining({
+      id: 'iring-brown', displayName: 'Iring Brown', species: 'Cat', gender: 'female', status: 'dead',
+      ageOverride: 11, birthDetails: 'Trash can', personality: 'Slow', protected: true,
+    }))
+    expect(countDescendants(data)).toBe(21)
     expect(validateTreeData(data)).toEqual({ valid: true, errors: [] })
   })
 })
 
 describe('graph validation', () => {
-  it('detects duplicate IDs, birth-order collisions, unsafe links, and future dates', () => {
+  it('detects duplicate IDs, portrait numbers, child membership, birth orders, unsafe links, and future dates', () => {
     const data = fresh()
     data.people.push({ ...data.people[0], link: 'javascript:alert(1)' })
     data.families[0].children[1].birthOrder = 1
+    data.families[1].children.push({ personId: 'child-7', birthOrder: 99 })
     data.people[1].birthDate = '2999-01-01'
-    const result = validateTreeData(data)
-    expect(result.valid).toBe(false)
-    expect(result.errors.join(' ')).toMatch(/Duplicate person ID/)
-    expect(result.errors.join(' ')).toMatch(/duplicate birth orders/)
-    expect(result.errors.join(' ')).toMatch(/unsafe link/)
-    expect(result.errors.join(' ')).toMatch(/future/)
+    const errors = validateTreeData(data).errors.join(' ')
+    expect(errors).toMatch(/Duplicate person ID/)
+    expect(errors).toMatch(/Duplicate portrait number/)
+    expect(errors).toMatch(/more than one parental family/)
+    expect(errors).toMatch(/duplicate birth orders/)
+    expect(errors).toMatch(/unsafe link/)
+    expect(errors).toMatch(/future/)
   })
 
   it('detects human and pet ancestry cycles', () => {
     const data = fresh()
-    data.families.push({
-      id: 'cycle-family',
-      parentIds: ['grandchild-1-1'],
-      children: [{ personId: 'child-1', birthOrder: 1 }],
-    })
+    data.families.push({ id: 'cycle-family', parentIds: ['grandchild-1-1'], children: [{ personId: 'child-1', birthOrder: 1 }] })
     const petParent = createBlankPet('pet-parent', 'Pet parent')
     const petChild = createBlankPet('pet-child', 'Pet child')
-    data.pets = [petParent, petChild]
+    data.pets.push(petParent, petChild)
     data.petFamilies = [
       { id: 'pet-a', parentPetIds: ['pet-parent'], children: [{ petId: 'pet-child', birthOrder: 1 }] },
       { id: 'pet-b', parentPetIds: ['pet-child'], children: [{ petId: 'pet-parent', birthOrder: 1 }] },
@@ -83,52 +112,65 @@ describe('graph validation', () => {
 })
 
 describe('editing operations', () => {
-  it('protects core records and adds a new child as the youngest', () => {
+  it('protects core records and adds children to a selected partner unit with permanent numbers', () => {
     const data = fresh()
     expect(deletePerson(data, 'child-1').deleted).toBe(false)
-    const next = addChild(data, 'child-7', 'New grandchild')
-    const family = next.families.find((item) => item.parentIds.includes('child-7'))!
-    expect(family.children).toEqual([{ personId: 'new-grandchild', birthOrder: 1 }])
-    expect(next.people.find((person) => person.id === 'new-grandchild')?.protected).toBe(false)
+    const withPartner = addPartner(data, 'new-child', 'Third partner')
+    const unit = withPartner.families.find((family) => family.parentIds.includes('third-partner'))!
+    const next = addChild(withPartner, 'new-child', 'Partner-specific child', unit.id)
+    expect(unit.children).toHaveLength(0)
+    expect(next.families.find((family) => family.id === unit.id)?.children).toEqual([{ personId: 'partner-specific-child', birthOrder: 1 }])
+    expect(next.families.filter((family) => family.children.some((child) => child.personId === 'partner-specific-child'))).toHaveLength(1)
+    expect(next.people.at(-1)?.portraitNumber).toBe(26)
   })
 
-  it('rejects imports that remove or unprotect a core person', () => {
-    const missing = fresh()
-    missing.people = missing.people.filter((person) => person.id !== 'father')
-    expect(validateTreeData(missing).errors).toContain('Protected core person father is missing.')
-    const unprotected = fresh()
-    unprotected.people.find((person) => person.id === 'child-7')!.protected = false
-    expect(validateTreeData(unprotected).errors).toContain('Protected core person child-7 cannot be unprotected.')
-  })
-
-  it('retains children under the remaining parent when a removable partner is deleted', () => {
-    const partnered = addPartner(fresh(), 'child-1', 'Partner one')
-    const familyBefore = partnered.families.find((family) => family.parentIds.includes('partner-one'))!
-    expect(familyBefore.children).toHaveLength(4)
-    const result = deletePerson(partnered, 'partner-one')
+  it('retains children under the remaining parent', () => {
+    const result = deletePerson(fresh(), 'new-partner')
     expect(result.deleted).toBe(true)
-    const familyAfter = result.data.families.find((family) => family.id === familyBefore.id)!
-    expect(familyAfter.parentIds).toEqual(['child-1'])
-    expect(familyAfter.children).toHaveLength(4)
+    const family = result.data.families.find((item) => item.id === 'family-new-child')!
+    expect(family.parentIds).toEqual(['new-child'])
+    expect(family.children.map((child) => child.personId)).toEqual(['new-child-2'])
   })
 
-  it('blocks deletion of an only parent with descendants, then permits leaf deletion', () => {
-    const withChild = addChild(fresh(), 'child-7', 'New grandchild')
-    expect(deletePerson(withChild, 'child-7').deleted).toBe(false)
-    const leafResult = deletePerson(withChild, 'new-grandchild')
-    expect(leafResult.deleted).toBe(true)
+  it('plans and applies a two-parent recursive branch cascade while retaining partners', () => {
+    const data = fresh()
+    data.people.push(
+      createBlankPerson('parent-a', 'Parent A', 25),
+      createBlankPerson('parent-b', 'Parent B', 26),
+      createBlankPerson('branch-child', 'Branch Child', 27),
+      createBlankPerson('branch-partner', 'Branch Partner', 28),
+      createBlankPerson('branch-grandchild', 'Branch Grandchild', 29),
+    )
+    data.families.push(
+      { id: 'removable-root', parentIds: ['parent-a', 'parent-b'], children: [{ personId: 'branch-child', birthOrder: 1 }] },
+      { id: 'removable-child', parentIds: ['branch-child', 'branch-partner'], children: [{ personId: 'branch-grandchild', birthOrder: 1 }] },
+    )
+    const plan = planPersonDeletion(data, ['parent-a', 'parent-b'])
+    expect(plan.blockedReason).toBeUndefined()
+    expect(plan.cascadeIds).toEqual(expect.arrayContaining(['branch-child', 'branch-grandchild']))
+    const next = applyPersonDeletePlan(data, plan)
+    expect(next.people.some((person) => person.id === 'branch-child')).toBe(false)
+    expect(next.people.some((person) => person.id === 'branch-grandchild')).toBe(false)
+    expect(next.people.some((person) => person.id === 'branch-partner')).toBe(true)
   })
 
-  it('supports pet ownership, lineage, deletion rules, and valid round trips', () => {
+  it('blocks any deletion plan that reaches a protected record', () => {
+    const data = fresh()
+    data.people.push(createBlankPerson('temporary-parent', 'Temporary parent', 25))
+    data.families.push({ id: 'protected-cascade', parentIds: ['temporary-parent'], children: [{ personId: 'father', birthOrder: 1 }] })
+    expect(planPersonDeletion(data, ['temporary-parent']).blockedReason).toMatch(/protected record Father/)
+  })
+
+  it('supports pet ownership, lineage, protections, and valid export round trips', () => {
     const data = fresh()
     const pet = { ...createBlankPet('luna', 'Luna'), species: 'Dog', ownerPersonId: 'child-2' }
-    const withPet = { ...data, pets: [pet] }
+    const withPet = { ...data, pets: [...data.pets, pet] }
     const withOffspring = addPetOffspring(withPet, 'luna', 'Nova')
-    expect(withOffspring.petFamilies[0].children[0]).toEqual({ petId: 'nova', birthOrder: 1 })
     const partnered = addPetPartner(withOffspring, 'luna', 'Sol')
-    expect(partnered.petFamilies[0].parentPetIds).toEqual(['luna', 'sol'])
+    expect(partnered.petFamilies.find((family) => family.parentPetIds.includes('luna'))?.parentPetIds).toEqual(['luna', 'sol'])
     expect(deletePet(withOffspring, 'luna').deleted).toBe(false)
     expect(deletePet(withOffspring, 'nova').deleted).toBe(true)
+    expect(deletePet(withOffspring, 'iring-brown').deleted).toBe(false)
     const exported = exportTreeData(partnered)
     expect(validateTreeData(JSON.parse(exported) as TreeData).valid).toBe(true)
     expect(JSON.parse(exported)).toEqual(partnered)

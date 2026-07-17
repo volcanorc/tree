@@ -8,10 +8,19 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { calculateAge, displayValue, isSafeExternalUrl, resolvePortrait, sortChildren } from '../lib/data'
+import {
+  bornValue,
+  calculateAge,
+  displayValue,
+  isSafeExternalUrl,
+  portraitCandidates,
+  resolvePortrait,
+  sortChildren,
+} from '../lib/data'
 import type { FamilyUnit, Person, Pet, PetFamilyUnit } from '../types'
 
 type Entity = Person | Pet
+type ViewState = { x: number; y: number; scale: number }
 
 interface NormalizedFamily {
   id: string
@@ -34,8 +43,47 @@ interface TooltipState {
   pinned: boolean
 }
 
+type Gesture =
+  | { kind: 'pan'; pointerId: number; startX: number; startY: number; originX: number; originY: number }
+  | { kind: 'pinch'; startDistance: number; startScale: number; worldX: number; worldY: number }
+
+const MIN_SCALE = 0.25
+const MAX_SCALE = 2.5
+
+function clampScale(value: number) {
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value))
+}
+
 function isPet(entity: Entity): entity is Pet {
   return 'species' in entity
+}
+
+function PortraitFallback({ entity }: { entity: Entity }) {
+  return (
+    <span className="portrait-fallback" aria-hidden="true">
+      <span className="portrait-head" />
+      <span className="portrait-body" />
+      <span className="portrait-initial">{entity.displayName.trim().charAt(0) || '?'}</span>
+    </span>
+  )
+}
+
+function EntityPortrait({ entity }: { entity: Entity }) {
+  const candidates = useMemo(
+    () => isPet(entity) ? (entity.portrait ? [resolvePortrait(entity.portrait)] : []) : portraitCandidates(entity),
+    [entity],
+  )
+  const [candidateIndex, setCandidateIndex] = useState(0)
+  if (candidateIndex >= candidates.length) return <PortraitFallback entity={entity} />
+  return (
+    <img
+      src={candidates[candidateIndex]}
+      alt=""
+      loading="lazy"
+      draggable={false}
+      onError={() => setCandidateIndex((index) => index + 1)}
+    />
+  )
 }
 
 function EntityCard({
@@ -51,17 +99,13 @@ function EntityCard({
   onLeave: () => void
   onTouch: (entity: Entity) => void
 }) {
-  const portrait = resolvePortrait(entity.portrait)
   const openLink = () => {
-    if (entity.link && isSafeExternalUrl(entity.link)) {
-      window.open(entity.link, '_blank', 'noopener,noreferrer')
-    }
+    if (entity.link && isSafeExternalUrl(entity.link)) window.open(entity.link, '_blank', 'noopener,noreferrer')
   }
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'touch' || event.pointerType === 'pen') onTouch(entity)
     else openLink()
   }
-
   return (
     <button
       className={`entity-card ${isPet(entity) ? 'pet-card' : ''}`}
@@ -82,21 +126,11 @@ function EntityCard({
       }}
     >
       <span className="portrait-ring">
-        {portrait ? (
-          <img src={portrait} alt="" loading="lazy" />
-        ) : (
-          <span className="portrait-fallback" aria-hidden="true">
-            <span className="portrait-head" />
-            <span className="portrait-body" />
-            <span className="portrait-initial">{entity.displayName.trim().charAt(0) || '?'}</span>
-          </span>
-        )}
+        <EntityPortrait key={isPet(entity) ? entity.portrait : `${entity.portrait}:${entity.portraitNumber}`} entity={entity} />
       </span>
       <span className="entity-name">{displayValue(entity.displayName)}</span>
       <span className="entity-role">
-        {isPet(entity)
-          ? displayValue(entity.species || entity.relationshipLabel)
-          : displayValue(entity.relationshipLabel)}
+        {isPet(entity) ? displayValue(entity.species || entity.relationshipLabel) : displayValue(entity.relationshipLabel)}
       </span>
       {owner && <span className="entity-owner">with {owner.displayName}</span>}
     </button>
@@ -114,30 +148,30 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
         ['Species', displayValue(entity.species)],
         ['Breed', displayValue(entity.breed)],
         ['Age', calculateAge(entity.birthDate, entity.ageOverride)],
-        ['Born', displayValue(entity.birthDate)],
+        ['Born', bornValue(entity)],
         ['Gender', displayValue(entity.gender)],
+        ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
         ['Owner', displayValue(owner?.displayName)],
         ['Personality', displayValue(entity.personality)],
       ]
     : [
         ['Age', calculateAge(entity.birthDate, entity.ageOverride)],
-        ['Born', displayValue(entity.birthDate)],
+        ['Born', bornValue(entity)],
         ['Gender', displayValue(entity.gender)],
+        ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
         ['Personality', displayValue(entity.personality)],
       ]
 
   return (
     <aside className={`detail-popover ${pinned ? 'detail-pinned' : ''}`} style={style} role="dialog" aria-label={`${entity.displayName} details`}>
       {pinned && <button className="popover-close" type="button" onClick={onClose} aria-label="Close details">×</button>}
+      {!isPet(entity) && <span className="portrait-number" aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>}
       <span className="popover-kicker">{displayValue(entity.relationshipLabel)}</span>
       <h3>{displayValue(entity.displayName)}</h3>
       {!isPet(entity) && entity.nickname && <p className="nickname">“{entity.nickname}”</p>}
       <dl>
         {rows.map(([label, value]) => (
-          <div key={String(label)}>
-            <dt>{label}</dt>
-            <dd>{String(value)}</dd>
-          </div>
+          <div key={String(label)}><dt>{label}</dt><dd>{String(value)}</dd></div>
         ))}
       </dl>
       {entity.biography && <p className="popover-bio">{entity.biography}</p>}
@@ -170,11 +204,11 @@ function LineageBranch({
   const entity = entities.get(entityId)
   if (!entity || path.has(entityId)) return null
   const nextPath = new Set(path).add(entityId)
-  const family = families.find((candidate) => candidate.parentIds.includes(entityId))
-  const partnerIds = family?.parentIds.filter((id) => id !== entityId) ?? []
+  const units = families.filter((family) => family.parentIds.includes(entityId))
+  const partnerIds = [...new Set(units.flatMap((family) => family.parentIds.filter((id) => id !== entityId)))]
   const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
   return (
-    <div className="lineage-branch">
+    <div className={`lineage-branch ${units.length > 1 ? 'has-multiple-unions' : ''}`}>
       <div className="parent-unit">
         <EntityCard entity={entity} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
         {partnerIds.map((partnerId) => {
@@ -183,22 +217,30 @@ function LineageBranch({
           const partnerOwner = isPet(partner) ? people.find((person) => person.id === partner.ownerPersonId) : undefined
           return <EntityCard key={partnerId} entity={partner} owner={partnerOwner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
         })}
-        {family && <span className="family-anchor" data-family-anchor={family.id} aria-hidden="true" />}
       </div>
-      {family && family.children.length > 0 && (
-        <div className="children-row">
-          {sortChildren(family.children).map((child) => (
-            <LineageBranch
-              key={child.entityId}
-              entityId={child.entityId}
-              entities={entities}
-              families={families}
-              people={people}
-              path={nextPath}
-              onHover={onHover}
-              onLeave={onLeave}
-              onTouch={onTouch}
-            />
+      {units.length > 0 && (
+        <div className="family-units-row">
+          {units.map((family) => (
+            <div className="family-unit-branch" key={family.id}>
+              <span className="family-anchor" data-family-anchor={family.id} aria-hidden="true" />
+              {family.children.length > 0 && (
+                <div className="children-row">
+                  {sortChildren(family.children).map((child) => (
+                    <LineageBranch
+                      key={child.entityId}
+                      entityId={child.entityId}
+                      entities={entities}
+                      families={families}
+                      people={people}
+                      path={nextPath}
+                      onHover={onHover}
+                      onLeave={onLeave}
+                      onTouch={onTouch}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -209,10 +251,15 @@ function LineageBranch({
 export function LineageGraph({ mode, people, families, pets, petFamilies }: LineageGraphProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ pointerId: number; x: number; y: number; originX: number; originY: number } | null>(null)
-  const [view, setView] = useState({ x: 24, y: 24, scale: 0.82 })
+  const activePointers = useRef(new Map<number, { x: number; y: number }>())
+  const gestureRef = useRef<Gesture | null>(null)
+  const wheelTimer = useRef<number | null>(null)
+  const [view, setView] = useState<ViewState>({ x: 24, y: 24, scale: 0.82 })
+  const viewRef = useRef(view)
   const [paths, setPaths] = useState<string[]>([])
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const [interacting, setInteracting] = useState(false)
+  useEffect(() => { viewRef.current = view }, [view])
 
   const entities = useMemo<Map<string, Entity>>(
     () => new Map((mode === 'people' ? people : pets).map((entity) => [entity.id, entity])),
@@ -224,23 +271,24 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
       : petFamilies.map((family) => ({ id: family.id, parentIds: family.parentPetIds, children: family.children.map((child) => ({ entityId: child.petId, birthOrder: child.birthOrder })) })),
     [mode, families, petFamilies],
   )
-
   const childIds = useMemo(() => new Set(normalizedFamilies.flatMap((family) => family.children.map((child) => child.entityId))), [normalizedFamilies])
   const roots = useMemo(() => {
-    const rootFamilies = normalizedFamilies.filter((family) => family.parentIds.every((id) => !childIds.has(id)))
-    const rootIds = rootFamilies.map((family) => family.parentIds[0]).filter(Boolean)
-    if (rootIds.length) return rootIds
-    return [...entities.keys()].filter((id) => !childIds.has(id)).slice(0, 1)
+    const rootIds = normalizedFamilies
+      .filter((family) => family.parentIds.every((id) => !childIds.has(id)))
+      .map((family) => family.parentIds[0])
+      .filter(Boolean)
+    const deduped = [...new Set(rootIds)]
+    return deduped.length ? deduped : [...entities.keys()].filter((id) => !childIds.has(id)).slice(0, 1)
   }, [childIds, entities, normalizedFamilies])
   const usedIds = useMemo(() => new Set(normalizedFamilies.flatMap((family) => [...family.parentIds, ...family.children.map((child) => child.entityId)])), [normalizedFamilies])
-  const standalone = useMemo(() => [...entities.keys()].filter((id) => !usedIds.has(id)), [entities, usedIds])
+  const standalone = useMemo(() => [...entities.keys()].filter((id) => !usedIds.has(id) && !roots.includes(id)), [entities, roots, usedIds])
   const branchUnits = useMemo(() => {
     const countBranch = (entityId: string, path: Set<string>): number => {
       if (path.has(entityId)) return 1
-      const family = normalizedFamilies.find((candidate) => candidate.parentIds.includes(entityId))
-      if (!family?.children.length) return 1
+      const units = normalizedFamilies.filter((family) => family.parentIds.includes(entityId) && family.children.length)
+      if (!units.length) return 1
       const nextPath = new Set(path).add(entityId)
-      return Math.max(1, family.children.reduce((total, child) => total + countBranch(child.entityId, nextPath), 0))
+      return Math.max(1, units.reduce((unitTotal, unit) => unitTotal + unit.children.reduce((total, child) => total + countBranch(child.entityId, nextPath), 0), 0))
     }
     return Math.max(1, roots.reduce((total, rootId) => total + countBranch(rootId, new Set()), standalone.length))
   }, [normalizedFamilies, roots, standalone.length])
@@ -249,9 +297,8 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const measureConnectors = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const anchorElements = [...canvas.querySelectorAll<HTMLElement>('[data-family-anchor]')]
-    const entityElements = [...canvas.querySelectorAll<HTMLElement>('[data-entity-id]')]
-    const entityMap = new Map(entityElements.map((element) => [element.dataset.entityId ?? '', element]))
+    const anchors = [...canvas.querySelectorAll<HTMLElement>('[data-family-anchor]')]
+    const entityMap = new Map([...canvas.querySelectorAll<HTMLElement>('[data-entity-id]')].map((element) => [element.dataset.entityId ?? '', element]))
     const pointInCanvas = (element: HTMLElement, vertical: 'center' | 'top') => {
       let x = element.offsetLeft + element.offsetWidth / 2
       let y = element.offsetTop + (vertical === 'center' ? element.offsetHeight / 2 : 0)
@@ -264,7 +311,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
       return { x, y }
     }
     const next: string[] = []
-    anchorElements.forEach((anchor) => {
+    anchors.forEach((anchor) => {
       const family = normalizedFamilies.find((item) => item.id === anchor.dataset.familyAnchor)
       if (!family) return
       const start = pointInCanvas(anchor, 'center')
@@ -283,20 +330,15 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     const frame = requestAnimationFrame(measureConnectors)
     const observer = new ResizeObserver(() => requestAnimationFrame(measureConnectors))
     if (canvasRef.current) observer.observe(canvasRef.current)
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
   }, [measureConnectors, entities])
 
   const resetView = useCallback(() => {
     const viewport = viewportRef.current
     if (!viewport) return
-    const scale = Math.min(1, Math.max(0.34, (viewport.clientWidth - 36) / canvasWidth))
+    const scale = Math.min(1, Math.max(MIN_SCALE, (viewport.clientWidth - 36) / canvasWidth))
     const renderedWidth = canvasWidth * scale
-    const x = renderedWidth <= viewport.clientWidth - 36
-      ? 18
-      : (viewport.clientWidth - renderedWidth) / 2
+    const x = renderedWidth <= viewport.clientWidth - 36 ? 18 : (viewport.clientWidth - renderedWidth) / 2
     setView({ x, y: 20, scale })
   }, [canvasWidth])
 
@@ -307,89 +349,149 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     return () => window.removeEventListener('resize', onResize)
   }, [resetView, mode])
 
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const rect = viewport.getBoundingClientRect()
+      const pointX = event.clientX - rect.left
+      const pointY = event.clientY - rect.top
+      setInteracting(true)
+      setView((current) => {
+        const scale = clampScale(current.scale * Math.exp(-event.deltaY * 0.0015))
+        const worldX = (pointX - current.x) / current.scale
+        const worldY = (pointY - current.y) / current.scale
+        return { x: pointX - worldX * scale, y: pointY - worldY * scale, scale }
+      })
+      if (wheelTimer.current) window.clearTimeout(wheelTimer.current)
+      wheelTimer.current = window.setTimeout(() => setInteracting(false), 120)
+    }
+    viewport.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      viewport.removeEventListener('wheel', onWheel)
+      if (wheelTimer.current) window.clearTimeout(wheelTimer.current)
+    }
+  }, [])
+
+  const zoomBy = (factor: number) => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const pointX = viewport.clientWidth / 2
+    const pointY = viewport.clientHeight / 2
+    setView((current) => {
+      const scale = clampScale(current.scale * factor)
+      const worldX = (pointX - current.x) / current.scale
+      const worldY = (pointY - current.y) / current.scale
+      return { x: pointX - worldX * scale, y: pointY - worldY * scale, scale }
+    })
+  }
+
+  const beginPinch = () => {
+    const viewport = viewportRef.current
+    const points = [...activePointers.current.values()]
+    if (!viewport || points.length < 2) return
+    const [a, b] = points
+    const rect = viewport.getBoundingClientRect()
+    const midX = (a.x + b.x) / 2 - rect.left
+    const midY = (a.y + b.y) / 2 - rect.top
+    const current = viewRef.current
+    gestureRef.current = {
+      kind: 'pinch',
+      startDistance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+      startScale: current.scale,
+      worldX: (midX - current.x) / current.scale,
+      worldY: (midY - current.y) / current.scale,
+    }
+  }
+
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('button, a, input, select, textarea')) return
-    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: view.x, originY: view.y }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setInteracting(true)
+    if (activePointers.current.size >= 2) beginPinch()
+    else {
+      const current = viewRef.current
+      gestureRef.current = { kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: current.x, originY: current.y }
+    }
   }
   const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    setView((current) => ({ ...current, x: drag.originX + event.clientX - drag.x, y: drag.originY + event.clientY - drag.y }))
+    if (!activePointers.current.has(event.pointerId)) return
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const gesture = gestureRef.current
+    if (activePointers.current.size >= 2 && gesture?.kind !== 'pinch') beginPinch()
+    if (gestureRef.current?.kind === 'pinch') {
+      const viewport = viewportRef.current
+      const points = [...activePointers.current.values()]
+      if (!viewport || points.length < 2) return
+      const [a, b] = points
+      const rect = viewport.getBoundingClientRect()
+      const midX = (a.x + b.x) / 2 - rect.left
+      const midY = (a.y + b.y) / 2 - rect.top
+      const pinch = gestureRef.current
+      const scale = clampScale(pinch.startScale * Math.hypot(b.x - a.x, b.y - a.y) / pinch.startDistance)
+      setView({ x: midX - pinch.worldX * scale, y: midY - pinch.worldY * scale, scale })
+    } else if (gestureRef.current?.kind === 'pan' && gestureRef.current.pointerId === event.pointerId) {
+      const pan = gestureRef.current
+      setView((current) => ({ ...current, x: pan.originX + event.clientX - pan.startX, y: pan.originY + event.clientY - pan.startY }))
+    }
   }
   const stopDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+    activePointers.current.delete(event.pointerId)
+    if (activePointers.current.size === 1) {
+      const [remaining] = [...activePointers.current.entries()]
+      const current = viewRef.current
+      gestureRef.current = { kind: 'pan', pointerId: remaining[0], startX: remaining[1].x, startY: remaining[1].y, originX: current.x, originY: current.y }
+    } else if (activePointers.current.size === 0) {
+      gestureRef.current = null
+      setInteracting(false)
+    }
   }
-  const zoom = (delta: number) => setView((current) => ({ ...current, scale: Math.min(1.5, Math.max(0.28, current.scale + delta)) }))
   const onHover = (entity: Entity, x: number, y: number) => setTooltip((current) => current?.pinned ? current : { entity, x, y, pinned: false })
   const onLeave = () => setTooltip((current) => current?.pinned ? current : null)
   const onTouch = (entity: Entity) => setTooltip({ entity, x: window.innerWidth / 2, y: window.innerHeight / 2, pinned: true })
 
   if (entities.size === 0) {
-    return (
-      <div className="empty-lineage">
-        <span className="empty-orbit" aria-hidden="true">✦</span>
-        <h2>No pets have been added yet</h2>
-        <p>Log in to the dashboard to add pets, owners, and lineage connections.</p>
-      </div>
-    )
+    return <div className="empty-lineage"><span className="empty-orbit" aria-hidden="true">✦</span><h2>No pets have been added yet</h2><p>Log in to the dashboard to add pets, owners, and lineage connections.</p></div>
   }
 
   return (
     <section className="lineage-section" aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
       <div className="graph-toolbar">
-        <span>{mode === 'people' ? 'Family' : 'Pets'} · drag to explore</span>
+        <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
-          <button type="button" onClick={() => zoom(-0.1)} aria-label="Zoom out">−</button>
-          <button type="button" onClick={() => zoom(0.1)} aria-label="Zoom in">+</button>
-          <button type="button" onClick={resetView} aria-label="Fit graph">⌂</button>
+          <button type="button" onClick={() => zoomBy(1 / 1.15)} aria-label="Zoom out">−</button>
+          <button type="button" onClick={() => zoomBy(1.15)} aria-label="Zoom in">+</button>
+          <button type="button" onClick={resetView} aria-label="Reset and fit graph">⌂</button>
         </div>
       </div>
       <div
-        className="lineage-viewport"
+        className={`lineage-viewport ${interacting ? 'is-interacting' : ''}`}
+        data-testid="lineage-viewport"
         ref={viewportRef}
         role="group"
         tabIndex={0}
-        aria-label="Lineage canvas. Use arrow keys or drag to explore."
+        aria-label="Lineage canvas. Use arrow keys, drag, mouse wheel, or pinch to explore."
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
         onKeyDown={(event) => {
-          const movements: Record<string, { x: number; y: number }> = {
-            ArrowLeft: { x: 44, y: 0 },
-            ArrowRight: { x: -44, y: 0 },
-            ArrowUp: { x: 0, y: 44 },
-            ArrowDown: { x: 0, y: -44 },
-          }
+          const movements: Record<string, { x: number; y: number }> = { ArrowLeft: { x: 44, y: 0 }, ArrowRight: { x: -44, y: 0 }, ArrowUp: { x: 0, y: 44 }, ArrowDown: { x: 0, y: -44 } }
+          if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.15); return }
+          if (event.key === '-') { event.preventDefault(); zoomBy(1 / 1.15); return }
+          if (event.key === '0') { event.preventDefault(); resetView(); return }
           const movement = movements[event.key]
           if (!movement) return
           event.preventDefault()
           setView((current) => ({ ...current, x: current.x + movement.x, y: current.y + movement.y }))
         }}
       >
-        <div
-          className="lineage-canvas"
-          ref={canvasRef}
-          style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-        >
-          <svg className="connector-layer" aria-hidden="true">
-            {paths.map((path, index) => <path key={`${path}-${index}`} d={path} />)}
-          </svg>
+        <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+          <svg className="connector-layer" aria-hidden="true">{paths.map((path, index) => <path key={`${path}-${index}`} d={path} />)}</svg>
           <div className="root-forest">
-            {roots.map((rootId) => (
-              <LineageBranch
-                key={rootId}
-                entityId={rootId}
-                entities={entities}
-                families={normalizedFamilies}
-                people={people}
-                path={new Set()}
-                onHover={onHover}
-                onLeave={onLeave}
-                onTouch={onTouch}
-              />
-            ))}
+            {roots.map((rootId) => <LineageBranch key={rootId} entityId={rootId} entities={entities} families={normalizedFamilies} people={people} path={new Set()} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />)}
           </div>
           {standalone.length > 0 && (
             <div className="standalone-row">

@@ -1,18 +1,20 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react'
-import type { Pet, Person, TreeData } from '../types'
+import type { PersonDeletePlan, Pet, Person, TreeData } from '../types'
 import {
   addChild,
   addPartner,
   addPetOffspring,
   addPetPartner,
   createBlankPet,
-  deletePerson,
+  applyPersonDeletePlan,
   deletePet,
   exportTreeData,
   getBirthOrder,
   getPetBirthOrder,
   makeId,
   isSafeExternalUrl,
+  migrateTreeData,
+  planPersonDeletion,
   updateBirthOrder,
   updatePetBirthOrder,
   validateTreeData,
@@ -41,6 +43,7 @@ const textFields: Array<{
   { key: 'displayName', label: 'Display name', placeholder: 'Full or public name' },
   { key: 'nickname', label: 'Nickname', placeholder: '?' },
   { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY-MM-DD' },
+  { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
   { key: 'ageOverride', label: 'Age override', placeholder: 'Used only when birth date is empty' },
   { key: 'relationshipLabel', label: 'Relationship label', placeholder: 'e.g. Eldest son' },
   { key: 'personality', label: 'Personality', placeholder: 'A few defining qualities' },
@@ -59,6 +62,7 @@ const petTextFields: Array<{
   { key: 'species', label: 'Species', placeholder: 'Dog, cat, bird…' },
   { key: 'breed', label: 'Breed', placeholder: '?' },
   { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY-MM-DD' },
+  { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
   { key: 'ageOverride', label: 'Age override', placeholder: 'Used only when birth date is empty' },
   { key: 'personality', label: 'Personality', placeholder: 'Temperament and favorite things' },
   { key: 'biography', label: 'Short biography', placeholder: 'A short public story', textarea: true },
@@ -131,6 +135,11 @@ export function Dashboard(props: DashboardProps) {
   const [selectedPetId, setSelectedPetId] = useState(data.pets[0]?.id ?? '')
   const [status, setStatus] = useState('Changes are saved as a draft in this browser.')
   const [importErrors, setImportErrors] = useState<string[]>([])
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedPersonIds, setSelectedPersonIds] = useState<Set<string>>(new Set())
+  const [pendingDelete, setPendingDelete] = useState<PersonDeletePlan | null>(null)
+  const [showChildChooser, setShowChildChooser] = useState(false)
+  const [showPartnerChooser, setShowPartnerChooser] = useState(false)
   const importInput = useRef<HTMLInputElement>(null)
   const validation = useMemo(() => validateTreeData(data), [data])
 
@@ -165,36 +174,84 @@ export function Dashboard(props: DashboardProps) {
 
   function addPersonChild() {
     if (!selectedPerson) return
-    const next = addChild(data, selectedPerson.id)
+    const units = data.families.filter((family) => family.parentIds.includes(selectedPerson.id))
+    if (units.length > 1) {
+      setShowChildChooser(true)
+      return
+    }
+    completeAddPersonChild(units[0]?.id)
+  }
+
+  function completeAddPersonChild(familyId?: string | 'single') {
+    if (!selectedPerson) return
+    const next = addChild(data, selectedPerson.id, 'New child', familyId)
     const newPerson = next.people[next.people.length - 1]
     onChange(next)
     setSelectedPersonId(newPerson.id)
+    setShowChildChooser(false)
     setStatus(`${newPerson.displayName} added as the youngest child. Complete the placeholders, then export JSON.`)
   }
 
   function addPersonPartner() {
     if (!selectedPerson) return
-    const next = addPartner(data, selectedPerson.id)
-    if (next === data) {
-      setStatus('This person already has two parents in their active family unit.')
+    const soloUnits = data.families.filter((family) => family.parentIds.length === 1 && family.parentIds[0] === selectedPerson.id)
+    if (soloUnits.length > 0) {
+      setShowPartnerChooser(true)
       return
     }
+    completeAddPersonPartner()
+  }
+
+  function completeAddPersonPartner(attachFamilyId?: string) {
+    if (!selectedPerson) return
+    const next = addPartner(data, selectedPerson.id, 'New partner', attachFamilyId)
     const newPerson = next.people[next.people.length - 1]
     onChange(next)
     setSelectedPersonId(newPerson.id)
+    setShowPartnerChooser(false)
     setStatus('Partner added. Their shared family branch is ready for children.')
   }
 
   function removeSelectedPerson() {
     if (!selectedPerson) return
-    const result = deletePerson(data, selectedPerson.id)
-    if (!result.deleted) {
-      setStatus(result.reason ?? 'This person cannot be deleted.')
+    beginPersonDeletion([selectedPerson.id])
+  }
+
+  function beginPersonDeletion(ids: string[]) {
+    const plan = planPersonDeletion(data, ids)
+    if (plan.blockedReason) {
+      setStatus(plan.blockedReason)
       return
     }
-    onChange(result.data)
-    setSelectedPersonId(result.data.people[0]?.id ?? '')
-    setStatus(`${selectedPerson.displayName} was removed from this local draft.`)
+    if (!plan.deleteIds.length) return
+    setPendingDelete(plan)
+  }
+
+  function confirmPersonDeletion() {
+    if (!pendingDelete) return
+    const currentIndex = Math.max(0, data.people.findIndex((person) => person.id === selectedPersonId))
+    const removedNames = pendingDelete.deleteIds
+      .map((id) => data.people.find((person) => person.id === id)?.displayName)
+      .filter(Boolean)
+    const next = applyPersonDeletePlan(data, pendingDelete)
+    const nextSelected = next.people[Math.min(currentIndex, Math.max(0, next.people.length - 1))]
+    onChange(next)
+    setSelectedPersonId(nextSelected?.id ?? '')
+    setSelectedPersonIds(new Set())
+    setSelectionMode(false)
+    setPendingDelete(null)
+    setStatus(`${removedNames.join(', ')} ${removedNames.length === 1 ? 'was' : 'were'} removed from this local draft.`)
+  }
+
+  function toggleBulkPerson(id: string) {
+    const person = data.people.find((candidate) => candidate.id === id)
+    if (!person || person.protected) return
+    setSelectedPersonIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   function addNewPet() {
@@ -271,7 +328,7 @@ export function Dashboard(props: DashboardProps) {
     event.target.value = ''
     if (!file) return
     try {
-      const parsed = JSON.parse(await file.text()) as TreeData
+      const parsed = migrateTreeData(JSON.parse(await file.text()))
       const result = validateTreeData(parsed)
       if (!result.valid) {
         setImportErrors(result.errors)
@@ -369,25 +426,59 @@ export function Dashboard(props: DashboardProps) {
             <div className="record-editor">
               <aside className="record-list" aria-label="People">
                 <div className="record-list-title">
-                  <span>People</span>
+                  <label className="bulk-toggle">
+                    <input
+                      type="checkbox"
+                      checked={selectionMode}
+                      onChange={(event) => {
+                        setSelectionMode(event.target.checked)
+                        if (!event.target.checked) setSelectedPersonIds(new Set())
+                      }}
+                    />
+                    <span>People</span>
+                  </label>
                   <small>{data.people.length}</small>
                 </div>
+                {selectionMode && (
+                  <div className="bulk-actions">
+                    <span>{selectedPersonIds.size} selected</span>
+                    <button
+                      className="mini-button danger-mini"
+                      type="button"
+                      disabled={selectedPersonIds.size === 0}
+                      onClick={() => beginPersonDeletion([...selectedPersonIds])}
+                    >
+                      Delete selected
+                    </button>
+                  </div>
+                )}
                 {data.people.map((person) => (
-                  <button
-                    key={person.id}
-                    className={selectedPerson?.id === person.id ? 'active' : ''}
-                    onClick={() => setSelectedPersonId(person.id)}
-                  >
-                    <span>{person.displayName}</span>
-                    <small>{person.protected ? 'Core' : person.relationshipLabel || '?'}</small>
-                  </button>
+                  <div className={`record-row ${selectedPerson?.id === person.id ? 'active' : ''}`} key={person.id}>
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${person.displayName}`}
+                        checked={selectedPersonIds.has(person.id)}
+                        disabled={person.protected}
+                        onChange={() => toggleBulkPerson(person.id)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => selectionMode ? toggleBulkPerson(person.id) : setSelectedPersonId(person.id)}
+                    >
+                      <span>{person.displayName}</span>
+                      <small>{person.protected ? 'Core · locked' : person.relationshipLabel || '?'}</small>
+                    </button>
+                  </div>
                 ))}
               </aside>
               {selectedPerson && (
                 <div className="record-form">
                   <header className="record-form-header">
                     <div>
-                      <p className="section-kicker">Stable ID · {selectedPerson.id}</p>
+                      <p className="section-kicker">Editing: {selectedPerson.displayName}</p>
+                      <p className="stable-id">Stable ID · {selectedPerson.id}</p>
                       <h2>{selectedPerson.displayName}</h2>
                     </div>
                     {selectedPerson.protected && <span className="protected-badge">Protected</span>}
@@ -429,6 +520,18 @@ export function Dashboard(props: DashboardProps) {
                         <option value="prefer-not-to-say">Prefer not to say</option>
                         <option value="unknown">Unknown</option>
                       </select>
+                    </label>
+                    <label>
+                      Status
+                      <select value={selectedPerson.status} onChange={(event) => updatePerson({ status: event.target.value as Person['status'] })}>
+                        <option value="alive">Alive</option>
+                        <option value="dead">Dead</option>
+                      </select>
+                    </label>
+                    <label>
+                      Portrait number
+                      <input value={selectedPerson.portraitNumber} readOnly aria-readonly="true" />
+                      <small>Use portraits/{selectedPerson.portraitNumber}.png (then .jpg, .jpeg, or .webp).</small>
                     </label>
                     {selectedBirthOrder !== null && (
                       <label>
@@ -517,6 +620,13 @@ export function Dashboard(props: DashboardProps) {
                       </select>
                     </label>
                     <label>
+                      Status
+                      <select value={selectedPet.status} onChange={(event) => updatePet({ status: event.target.value as Pet['status'] })}>
+                        <option value="alive">Alive</option>
+                        <option value="dead">Dead</option>
+                      </select>
+                    </label>
+                    <label>
                       Human owner
                       <select value={selectedPet.ownerPersonId} onChange={(event) => updatePet({ ownerPersonId: event.target.value })}>
                         <option value="">None / unknown</option>
@@ -584,6 +694,65 @@ export function Dashboard(props: DashboardProps) {
           </div>
         </aside>
       </div>
+      {showChildChooser && selectedPerson && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowChildChooser(false)}>
+          <section className="dashboard-modal celestial-panel" role="dialog" aria-modal="true" aria-labelledby="child-unit-title" onMouseDown={(event) => event.stopPropagation()}>
+            <p className="section-kicker">Choose the parents</p>
+            <h2 id="child-unit-title">Which branch does this child belong to?</h2>
+            <p>Select the other parent for {selectedPerson.displayName}, or keep this as a single-parent branch.</p>
+            <div className="choice-grid">
+              {data.families.filter((family) => family.parentIds.includes(selectedPerson.id)).map((family) => {
+                const partners = family.parentIds.filter((id) => id !== selectedPerson.id).map((id) => data.people.find((person) => person.id === id)?.displayName ?? id)
+                return (
+                  <button className="secondary-button" type="button" key={family.id} onClick={() => completeAddPersonChild(family.id)}>
+                    {partners.length ? partners.join(' & ') : 'Existing single-parent branch'}
+                  </button>
+                )
+              })}
+              <button className="secondary-button" type="button" onClick={() => completeAddPersonChild('single')}>Single parent</button>
+            </div>
+            <button className="ghost-button modal-cancel" type="button" onClick={() => setShowChildChooser(false)}>Cancel</button>
+          </section>
+        </div>
+      )}
+      {showPartnerChooser && selectedPerson && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowPartnerChooser(false)}>
+          <section className="dashboard-modal celestial-panel" role="dialog" aria-modal="true" aria-labelledby="partner-unit-title" onMouseDown={(event) => event.stopPropagation()}>
+            <p className="section-kicker">Add another partner</p>
+            <h2 id="partner-unit-title">Where should this partnership begin?</h2>
+            <p>Attach the partner to an existing single-parent branch, or start a separate union.</p>
+            <div className="choice-grid">
+              {data.families.filter((family) => family.parentIds.length === 1 && family.parentIds[0] === selectedPerson.id).map((family) => (
+                <button className="secondary-button" type="button" key={family.id} onClick={() => completeAddPersonPartner(family.id)}>
+                  Attach to branch with {family.children.length} {family.children.length === 1 ? 'child' : 'children'}
+                </button>
+              ))}
+              <button className="secondary-button" type="button" onClick={() => completeAddPersonPartner()}>Start separate union</button>
+            </div>
+            <button className="ghost-button modal-cancel" type="button" onClick={() => setShowPartnerChooser(false)}>Cancel</button>
+          </section>
+        </div>
+      )}
+      {pendingDelete && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingDelete(null)}>
+          <section className="dashboard-modal celestial-panel delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" onMouseDown={(event) => event.stopPropagation()}>
+            <p className="section-kicker">Permanent draft change</p>
+            <h2 id="delete-title">Delete {pendingDelete.deleteIds.length} {pendingDelete.deleteIds.length === 1 ? 'person' : 'people'}?</h2>
+            <p>
+              Selected: {pendingDelete.requestedIds.map((id) => data.people.find((person) => person.id === id)?.displayName ?? id).join(', ')}
+            </p>
+            {pendingDelete.cascadeIds.length > 0 && (
+              <p className="cascade-warning">
+                This also removes the descendant branch: {pendingDelete.cascadeIds.map((id) => data.people.find((person) => person.id === id)?.displayName ?? id).join(', ')}
+              </p>
+            )}
+            <div className="modal-actions">
+              <button className="danger-button" type="button" onClick={confirmPersonDeletion}>Delete permanently</button>
+              <button className="ghost-button" type="button" onClick={() => setPendingDelete(null)}>Cancel</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   )
 }

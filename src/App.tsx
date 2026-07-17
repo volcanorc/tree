@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { LineageGraph } from './components/LineageGraph'
 import { SiteHeader } from './components/SiteHeader'
-import { loadPublishedData, validateTreeData } from './lib/data'
+import { countDescendants, loadPublishedData, migrateTreeData, validateTreeData } from './lib/data'
 import type { TreeData } from './types'
 
 type View = 'family' | 'pets' | 'dashboard'
@@ -37,7 +37,7 @@ function ArchiveView({ data, view }: { data: TreeData; view: 'family' | 'pets' }
         <div className="map-heading">
           <div>
             <p className="section-kicker">{isFamily ? 'Generation map' : 'Pet lineage map'}</p>
-            <h2>{isFamily ? 'Our connected branches' : 'Companions across generations'}</h2>
+            <h2>{isFamily ? 'Family Branches' : 'Companions across generations'}</h2>
           </div>
           <div className="map-legend" aria-label="Map legend">
             <span><i className="legend-dot copper" /> Person</span>
@@ -54,13 +54,13 @@ function ArchiveView({ data, view }: { data: TreeData; view: 'family' | 'pets' }
       </section>
 
       <section className="archive-note reveal">
-        <span className="archive-mark" aria-hidden="true">07</span>
+        <span className="archive-mark" aria-hidden="true">HS</span>
         <div>
-          <p className="section-kicker">An evolving record</p>
-          <h2>{isFamily ? 'Built to grow with the family' : 'Every companion belongs in the story'}</h2>
+          <p className="section-kicker">{isFamily ? 'A family record' : 'An evolving record'}</p>
+          <h2>{isFamily ? 'HERMOSO X Sullano' : 'Every companion belongs in the story'}</h2>
           <p>
             {isFamily
-              ? 'Names and details can be completed over time. The protected founders and seven core siblings stay anchored while new generations can be added, reordered, and carefully maintained.'
+              ? 'From the founding generation to every branch that follows, each name, story, and connection is preserved as part of a living family legacy.'
               : 'Add pets independently, connect them to a human owner, or map known pet parents and offspring in the dashboard.'}
           </p>
         </div>
@@ -92,9 +92,10 @@ export default function App() {
         const stored = localStorage.getItem(DRAFT_KEY)
         if (stored) {
           try {
-            const draft = JSON.parse(stored) as TreeData
+            const draft = migrateTreeData(JSON.parse(stored))
             if (validateTreeData(draft).valid) {
               setData(draft)
+              localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
               setDraftRecovered(true)
               return
             }
@@ -124,9 +125,7 @@ export default function App() {
 
   const counts = useMemo(() => {
     if (!data) return null
-    const root = data.families.find((family) => family.id === 'root-family')
-    const grandchildren = data.people.length - 2 - (root?.children.length ?? 0)
-    return { siblings: root?.children.length ?? 0, grandchildren }
+    return countDescendants(data)
   }, [data])
 
   function navigate(next: View) {
@@ -218,7 +217,7 @@ export default function App() {
           <span className="footer-mark" aria-hidden="true">✦</span>
           <p>{data.site.title}</p>
         </div>
-        <p>{counts ? `${counts.siblings} siblings · ${counts.grandchildren} descendants recorded` : 'A living family record'}</p>
+        <p>{`${counts} descendants recorded`}</p>
         <button onClick={() => navigate('dashboard')}>Manage archive</button>
       </footer>
     </div>
