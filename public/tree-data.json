@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "site": {
     "title": "The Family Archive",
     "subtitle": "A lasting record of the people and stories behind every generation.",
@@ -18,13 +18,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Root parent",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/1.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 1,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "mother",
@@ -36,13 +36,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Root parent",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/2.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 2,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-1",
@@ -54,13 +54,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Eldest son",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/9.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 9,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-2",
@@ -72,13 +72,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Second child",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/8.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 8,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-3",
@@ -90,13 +90,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Third child",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/7.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 7,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-4",
@@ -108,13 +108,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Fourth child",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/6.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 6,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-5",
@@ -126,13 +126,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Fifth child",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/5.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 5,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-6",
@@ -144,13 +144,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Sixth child",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/4.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 4,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "child-7",
@@ -162,13 +162,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Youngest son",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/3.png",
       "protected": true,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 3,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-1-1",
@@ -180,13 +180,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/21.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 21,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-1-2",
@@ -198,13 +198,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/20.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 20,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-1-3",
@@ -216,13 +216,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/19.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 19,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-1-4",
@@ -234,13 +234,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/18.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 18,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-2-1",
@@ -252,13 +252,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/17.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 17,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-2-2",
@@ -270,13 +270,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/16.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 16,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-3-1",
@@ -288,13 +288,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/15.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 15,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-3-2",
@@ -306,13 +306,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/14.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 14,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-4-1",
@@ -324,13 +324,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/13.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 13,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-4-2",
@@ -342,13 +342,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/12.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 12,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-5-1",
@@ -360,13 +360,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/11.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 11,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "grandchild-5-2",
@@ -378,13 +378,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Grandchild",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/10.png",
       "protected": false,
       "createdAt": "2026-07-17T00:00:00.000Z",
       "birthDetails": "",
       "portraitNumber": 10,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "new-child",
@@ -396,13 +396,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Family member",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/22.png",
       "protected": false,
       "createdAt": "2026-07-17T07:20:27.022Z",
       "birthDetails": "",
       "portraitNumber": 22,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "new-partner",
@@ -414,13 +414,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Family member",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/23.png",
       "protected": false,
       "createdAt": "2026-07-17T07:20:28.057Z",
       "birthDetails": "",
       "portraitNumber": 23,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     },
     {
       "id": "new-child-2",
@@ -432,13 +432,13 @@
       "personality": "",
       "biography": "",
       "relationshipLabel": "Family member",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/24.png",
       "protected": false,
       "createdAt": "2026-07-17T07:20:51.452Z",
       "birthDetails": "",
       "portraitNumber": 24,
-      "status": "alive"
+      "status": "alive",
+      "links": []
     }
   ],
   "families": [
@@ -598,12 +598,13 @@
       "personality": "Slow",
       "biography": "",
       "relationshipLabel": "Pet founder",
-      "portrait": "",
-      "link": "",
+      "portrait": "portraits/pets/1.png",
       "status": "dead",
       "ownerPersonId": "",
       "protected": true,
-      "createdAt": "2026-07-17T00:00:00.000Z"
+      "createdAt": "2026-07-17T00:00:00.000Z",
+      "portraitNumber": 1,
+      "links": []
     }
   ],
   "petFamilies": []

@@ -72,7 +72,7 @@ export interface PetFamilyUnit {
 }
 
 export interface TreeData {
-  version: number
+  version: 3
   site: SiteConfig
   people: Person[]
   families: FamilyUnit[]

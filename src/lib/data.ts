@@ -67,19 +67,27 @@ export function isSafeExternalUrl(value: string): boolean {
 export function isSafePortrait(value: string): boolean {
   if (!value.trim()) return false
   const trimmed = value.trim()
-  try {
-    const parsed = new URL(trimmed, 'https://archive.local')
-    const isRelative = parsed.origin === 'https://archive.local' && !trimmed.includes('://')
-    return (isRelative || parsed.protocol === 'https:') && parsed.pathname.toLowerCase().endsWith('.png')
-  } catch {
-    return false
+
+  if (/^https:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed)
+      return parsed.protocol === 'https:' && parsed.pathname.toLowerCase().endsWith('.png')
+    } catch {
+      return false
+    }
   }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith('//') || trimmed.includes('\\')) return false
+  const path = trimmed.replace(/^\//, '')
+  const segments = path.split('/')
+  if (!path || segments.some((segment) => !segment || segment === '.' || segment === '..')) return false
+  return path.toLowerCase().endsWith('.png')
 }
 
 export function resolvePortrait(value: string): string {
-  if (!value) return ''
-  if (value.startsWith('https://')) return value
-  return `${import.meta.env.BASE_URL}${value.replace(/^\//, '')}`
+  const trimmed = value.trim()
+  if (/^https:\/\//i.test(trimmed)) return trimmed
+  return `${import.meta.env.BASE_URL}${trimmed.replace(/^\/+/, '')}`
 }
 
 export function personPortraitPath(portraitNumber: number): string {
@@ -198,10 +206,15 @@ function iringBrown(): Pet {
 export function migrateTreeData(input: unknown): TreeData {
   if (!input || typeof input !== 'object') throw new Error('The archive data is not an object.')
   type LegacyRecord = { link?: unknown; links?: unknown }
-  const raw = input as Partial<TreeData> & {
+  type LegacyTreeData = {
+    version?: unknown
+    site?: Partial<TreeData['site']>
     people?: Array<Partial<Person> & LegacyRecord>
+    families?: Array<Partial<FamilyUnit>>
     pets?: Array<Partial<Pet> & LegacyRecord>
+    petFamilies?: Array<Partial<PetFamilyUnit>>
   }
+  const raw = input as LegacyTreeData
   if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) throw new Error('Unsupported or missing data version.')
   const rawPeople = Array.isArray(raw.people) ? raw.people : []
   const hasVersionTwoFields = raw.version === 2 || raw.version === 3

@@ -14,13 +14,40 @@ import {
   deletePerson,
   deletePet,
   exportTreeData,
+  isSafePortrait,
   migrateTreeData,
+  nextPetPortraitNumber,
+  nextPortraitNumber,
   planPersonDeletion,
   sortChildren,
   validateTreeData,
 } from './data'
 
 const fresh = () => structuredClone(seed) as TreeData
+
+function legacyVersion(version: 1 | 2) {
+  const legacy = structuredClone(seed) as unknown as Record<string, unknown>
+  legacy.version = version
+  const people = legacy.people as Array<Record<string, unknown>>
+  people.forEach((person) => {
+    person.link = person.id === 'father' ? 'https://example.com/father' : ''
+    delete person.links
+    person.portrait = ''
+    if (version === 1) {
+      delete person.portraitNumber
+      delete person.birthDetails
+      delete person.status
+    }
+  })
+  const pets = legacy.pets as Array<Record<string, unknown>>
+  pets.forEach((pet) => {
+    pet.link = 'https://example.com/iring'
+    pet.portrait = ''
+    delete pet.links
+    delete pet.portraitNumber
+  })
+  return legacy
+}
 
 describe('age, ordering, and migration', () => {
   it('calculates age from a full date before using an override', () => {
@@ -38,34 +65,39 @@ describe('age, ordering, and migration', () => {
     ])
   })
 
-  it('migrates version-one data with stable portrait numbers and defaults', () => {
-    const legacy = structuredClone(seed) as unknown as Record<string, unknown>
-    legacy.version = 1
-    const people = legacy.people as Array<Record<string, unknown>>
-    people.forEach((person) => {
-      delete person.portraitNumber
-      delete person.birthDetails
-      delete person.status
-    })
-    legacy.pets = []
-    const migrated = migrateTreeData(legacy)
-    expect(migrated.version).toBe(2)
-    expect(migrated.people.find((person) => person.id === 'father')?.portraitNumber).toBe(1)
+  it.each([1, 2] as const)('migrates version %s data to version 3 with links and automatic PNG paths', (version) => {
+    const migrated = migrateTreeData(legacyVersion(version))
+    expect(migrated.version).toBe(3)
+    expect(migrated.people.find((person) => person.id === 'father')).toEqual(expect.objectContaining({
+      portraitNumber: 1,
+      portrait: 'portraits/1.png',
+      links: ['https://example.com/father'],
+    }))
     expect(migrated.people.find((person) => person.id === 'child-7')?.portraitNumber).toBe(3)
     expect(migrated.people.find((person) => person.id === 'new-child')?.portraitNumber).toBe(22)
-    expect(migrated.people.every((person) => person.status === 'alive')).toBe(true)
-    expect(migrated.pets[0].id).toBe('iring-brown')
-    expect(validateTreeData(migrated).valid).toBe(true)
+    expect(migrated.pets[0]).toEqual(expect.objectContaining({
+      id: 'iring-brown',
+      portraitNumber: 1,
+      portrait: 'portraits/pets/1.png',
+      links: ['https://example.com/iring'],
+      protected: true,
+    }))
+    expect(validateTreeData(migrated)).toEqual({ valid: true, errors: [] })
+  })
+
+  it('migrates current version-3 data idempotently', () => {
+    expect(migrateTreeData(fresh())).toEqual(fresh())
   })
 })
 
 describe('preserved archive data', () => {
-  it('keeps all current family edits, core protections, numbered portraits, and pet founder', () => {
+  it('keeps all family edits, core protections, numbered portraits, and the pet founder', () => {
     const data = fresh()
-    expect(data.version).toBe(2)
+    expect(data.version).toBe(3)
     expect(data.people).toHaveLength(24)
     expect(data.people.filter((person) => person.protected)).toHaveLength(9)
     expect(new Set(data.people.map((person) => person.portraitNumber)).size).toBe(24)
+    expect(data.people.every((person) => Array.isArray(person.links) && person.portrait.endsWith('.png'))).toBe(true)
     expect(data.people.find((person) => person.displayName === 'second wife')).toBeTruthy()
     expect([1, 2, 3, 4, 5, 6, 7].map((number) =>
       data.families.find((family) => family.id === `family-child-${number}`)?.children.length ?? 0,
@@ -73,16 +105,28 @@ describe('preserved archive data', () => {
     expect(data.pets).toContainEqual(expect.objectContaining({
       id: 'iring-brown', displayName: 'Iring Brown', species: 'Cat', gender: 'female', status: 'dead',
       ageOverride: 11, birthDetails: 'Trash can', personality: 'Slow', protected: true,
+      portraitNumber: 1, portrait: 'portraits/pets/1.png', links: [],
     }))
     expect(countDescendants(data)).toBe(21)
     expect(validateTreeData(data)).toEqual({ valid: true, errors: [] })
   })
 })
 
-describe('graph validation', () => {
+describe('portrait and graph validation', () => {
+  it('accepts repository PNG paths and explicit HTTPS PNG URLs only', () => {
+    expect(isSafePortrait('portraits/25.png')).toBe(true)
+    expect(isSafePortrait('/portraits/custom.png')).toBe(true)
+    expect(isSafePortrait('https://images.example.com/family/member.PNG?size=2')).toBe(true)
+    expect(isSafePortrait('http://images.example.com/member.png')).toBe(false)
+    expect(isSafePortrait('//images.example.com/member.png')).toBe(false)
+    expect(isSafePortrait('../member.png')).toBe(false)
+    expect(isSafePortrait('portraits/member.webp')).toBe(false)
+    expect(isSafePortrait('javascript:member.png')).toBe(false)
+  })
+
   it('detects duplicate IDs, portrait numbers, child membership, birth orders, unsafe links, and future dates', () => {
     const data = fresh()
-    data.people.push({ ...data.people[0], link: 'javascript:alert(1)' })
+    data.people.push({ ...data.people[0], links: ['javascript:alert(1)'] })
     data.families[0].children[1].birthOrder = 1
     data.families[1].children.push({ personId: 'child-7', birthOrder: 99 })
     data.people[1].birthDate = '2999-01-01'
@@ -98,8 +142,8 @@ describe('graph validation', () => {
   it('detects human and pet ancestry cycles', () => {
     const data = fresh()
     data.families.push({ id: 'cycle-family', parentIds: ['grandchild-1-1'], children: [{ personId: 'child-1', birthOrder: 1 }] })
-    const petParent = createBlankPet('pet-parent', 'Pet parent')
-    const petChild = createBlankPet('pet-child', 'Pet child')
+    const petParent = createBlankPet('pet-parent', 'Pet parent', 2)
+    const petChild = createBlankPet('pet-child', 'Pet child', 3)
     data.pets.push(petParent, petChild)
     data.petFamilies = [
       { id: 'pet-a', parentPetIds: ['pet-parent'], children: [{ petId: 'pet-child', birthOrder: 1 }] },
@@ -112,6 +156,17 @@ describe('graph validation', () => {
 })
 
 describe('editing operations', () => {
+  it('assigns independent next portrait numbers for people and pets', () => {
+    const data = fresh()
+    expect(nextPortraitNumber(data)).toBe(25)
+    expect(nextPetPortraitNumber(data)).toBe(2)
+    const withPet = addPetOffspring(data, 'iring-brown', 'Brown Kitten')
+    expect(withPet.pets.at(-1)).toEqual(expect.objectContaining({
+      portraitNumber: 2,
+      portrait: 'portraits/pets/2.png',
+    }))
+  })
+
   it('protects core records and adds children to a selected partner unit with permanent numbers', () => {
     const data = fresh()
     expect(deletePerson(data, 'child-1').deleted).toBe(false)
@@ -161,9 +216,9 @@ describe('editing operations', () => {
     expect(planPersonDeletion(data, ['temporary-parent']).blockedReason).toMatch(/protected record Father/)
   })
 
-  it('supports pet ownership, lineage, protections, and valid export round trips', () => {
+  it('supports pet ownership, lineage, protections, and version-3 multi-link export round trips', () => {
     const data = fresh()
-    const pet = { ...createBlankPet('luna', 'Luna'), species: 'Dog', ownerPersonId: 'child-2' }
+    const pet = { ...createBlankPet('luna', 'Luna', 2), species: 'Dog', ownerPersonId: 'child-2', links: ['https://example.com/luna', 'https://example.com/video'] }
     const withPet = { ...data, pets: [...data.pets, pet] }
     const withOffspring = addPetOffspring(withPet, 'luna', 'Nova')
     const partnered = addPetPartner(withOffspring, 'luna', 'Sol')
@@ -172,7 +227,13 @@ describe('editing operations', () => {
     expect(deletePet(withOffspring, 'nova').deleted).toBe(true)
     expect(deletePet(withOffspring, 'iring-brown').deleted).toBe(false)
     const exported = exportTreeData(partnered)
-    expect(validateTreeData(JSON.parse(exported) as TreeData).valid).toBe(true)
     expect(JSON.parse(exported)).toEqual(partnered)
+    expect(migrateTreeData(JSON.parse(exported))).toEqual(partnered)
+  })
+
+  it('blocks export while duplicate portrait numbers are unresolved', () => {
+    const data = fresh()
+    data.people[1].portraitNumber = data.people[0].portraitNumber
+    expect(() => exportTreeData(data)).toThrow(/Duplicate portrait number/)
   })
 })

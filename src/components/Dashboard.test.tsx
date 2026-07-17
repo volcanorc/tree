@@ -5,8 +5,8 @@ import seed from '../../public/tree-data.json'
 import type { TreeData } from '../types'
 import { Dashboard } from './Dashboard'
 
-function DashboardHarness() {
-  const published = structuredClone(seed) as TreeData
+function DashboardHarness({ initial = structuredClone(seed) as TreeData }: { initial?: TreeData }) {
+  const published = structuredClone(initial)
   const [data, setData] = useState(published)
   return (
     <Dashboard
@@ -27,7 +27,20 @@ function openPeople() {
   return screen.getByRole('complementary', { name: 'People' })
 }
 
-describe('Dashboard people editor', () => {
+function openPets() {
+  render(<DashboardHarness />)
+  fireEvent.click(screen.getByRole('button', { name: 'Pets' }))
+  return screen.getByRole('complementary', { name: 'Pets' })
+}
+
+describe('Dashboard layout and people editor', () => {
+  it('uses the required heading copy', () => {
+    render(<DashboardHarness />)
+    expect(screen.getByText('Every detail preserved.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Archive dashboard' })).toBeInTheDocument()
+    expect(screen.getByText('Modify the current family history.')).toBeInTheDocument()
+  })
+
   it('deletes consecutive people without resetting selection to Father', () => {
     const list = openPeople()
     fireEvent.click(within(list).getByRole('button', { name: /second wife/i }))
@@ -54,7 +67,7 @@ describe('Dashboard people editor', () => {
     expect(within(list).queryByRole('button', { name: /second wife/i })).not.toBeInTheDocument()
   })
 
-  it('offers side-by-side family-unit choices when a person has multiple partners', () => {
+  it('offers family-unit choices when a person has multiple partners', () => {
     const list = openPeople()
     fireEvent.click(within(list).getAllByRole('button', { name: /New child/i })[0])
     fireEvent.click(screen.getByRole('button', { name: 'Add partner' }))
@@ -66,5 +79,59 @@ describe('Dashboard people editor', () => {
     expect(within(dialog).getByRole('button', { name: 'Single parent' })).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'second wife' }))
     expect(screen.getByText(/added as the youngest child/i)).toBeInTheDocument()
+  })
+
+  it('synchronizes automatic portrait paths, preserves custom paths, and detects duplicates', () => {
+    openPeople()
+    const numberInput = screen.getByLabelText(/Portrait number/i)
+    const pathInput = screen.getByLabelText('Portrait path or HTTPS PNG URL')
+
+    fireEvent.change(numberInput, { target: { value: '25' } })
+    expect(pathInput).toHaveValue('portraits/25.png')
+    fireEvent.change(pathInput, { target: { value: 'portraits/custom.png' } })
+    fireEvent.change(numberInput, { target: { value: '26' } })
+    expect(pathInput).toHaveValue('portraits/custom.png')
+    fireEvent.change(numberInput, { target: { value: '2' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('Portrait 2 is already assigned')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive & export' }))
+    expect(screen.getByRole('button', { name: 'Download JSON' })).toBeDisabled()
+  })
+
+  it('adds and removes link rows and blocks export for an invalid non-empty link', () => {
+    openPeople()
+    expect(screen.getAllByPlaceholderText('https://…')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Add another profile link' }))
+    const rows = screen.getAllByPlaceholderText('https://…')
+    expect(rows).toHaveLength(2)
+    fireEvent.change(rows[0], { target: { value: 'ftp://example.com/profile' } })
+    expect(screen.getByText('Use an HTTP or HTTPS link.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove profile link 2' }))
+    expect(screen.getAllByPlaceholderText('https://…')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Archive & export' }))
+    expect(screen.getByRole('button', { name: 'Download JSON' })).toBeDisabled()
+  })
+})
+
+describe('Dashboard pets editor', () => {
+  it('matches the selectable People layout and creates pets with independent numbering', () => {
+    const list = openPets()
+    expect(within(list).getByText('1')).toBeInTheDocument()
+    const iringButton = within(list).getByRole('button', { name: /Iring Brown/i })
+    expect(iringButton.closest('.record-row')).toHaveClass('active')
+    expect(screen.getByText('Editing: Iring Brown')).toBeInTheDocument()
+    expect(screen.getByText('Stable ID · iring-brown')).toBeInTheDocument()
+
+    fireEvent.click(within(list).getByRole('button', { name: 'Add' }))
+    expect(screen.getByText('Editing: New pet')).toBeInTheDocument()
+    expect(screen.getByLabelText(/Portrait number/i)).toHaveValue(2)
+    expect(screen.getByLabelText('Portrait path or HTTPS PNG URL')).toHaveValue('portraits/pets/2.png')
+  })
+
+  it('detects duplicate pet portrait numbers within the pet namespace', () => {
+    const list = openPets()
+    fireEvent.click(within(list).getByRole('button', { name: 'Add' }))
+    fireEvent.change(screen.getByLabelText(/Portrait number/i), { target: { value: '1' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('Pet portrait 1 is already assigned')
   })
 })

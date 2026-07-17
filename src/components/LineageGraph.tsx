@@ -180,7 +180,7 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
       {pinned && safeLinks.length > 0 && (
         <div className="story-links" aria-label="Profile links">
           {safeLinks.map((link, index) => (
-            <a className="story-link" href={link} target="_blank" rel="noreferrer" key={`${link}-${index}`}>Visit {index + 1} ↗</a>
+            <a className="story-link" href={link} target="_blank" rel="noopener noreferrer" key={`${link}-${index}`}>Visit {index + 1}</a>
           ))}
         </div>
       )}

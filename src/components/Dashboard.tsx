@@ -74,7 +74,8 @@ const petTextFields: Array<{
 ]
 
 function LinkEditor({ links, onChange }: { links: string[]; onChange: (links: string[]) => void }) {
-  const rows = links.length > 0 ? links : ['']
+  const safeLinks = Array.isArray(links) ? links : []
+  const rows = safeLinks.length > 0 ? safeLinks : ['']
   const updateLink = (index: number, value: string) => {
     const next = [...rows]
     next[index] = value
@@ -487,10 +488,10 @@ export function Dashboard(props: DashboardProps) {
               <div className={`validation-box ${validation.valid ? 'valid' : 'invalid'}`}>
                 <strong>{validation.valid ? 'Archive is valid' : `${validation.errors.length} issue${validation.errors.length === 1 ? '' : 's'} to resolve`}</strong>
                 {!validation.valid && (
-                  <ul>{validation.errors.map((error) => <li key={error}>{error}</li>)}</ul>
+                  <ul>{validation.errors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}</ul>
                 )}
                 {importErrors.length > 0 && (
-                  <ul>{importErrors.map((error) => <li key={error}>{error}</li>)}</ul>
+                  <ul>{importErrors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}</ul>
                 )}
               </div>
               <div className="export-actions">
