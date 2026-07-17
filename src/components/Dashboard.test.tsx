@@ -1,13 +1,24 @@
 import { useState } from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import seed from '../../public/tree-data.json'
+import seed from '../test/fixtures/tree-data-v4.json'
 import type { TreeData } from '../types'
+import { addPartner } from '../lib/data'
 import { Dashboard } from './Dashboard'
 
-function DashboardHarness({ initial = structuredClone(seed) as TreeData }: { initial?: TreeData }) {
+function DashboardHarness({
+  initial = structuredClone(seed) as TreeData,
+  onDataChange,
+}: {
+  initial?: TreeData
+  onDataChange?: (data: TreeData) => void
+}) {
   const published = structuredClone(initial)
   const [data, setData] = useState(published)
+  const updateData = (next: TreeData) => {
+    setData(next)
+    onDataChange?.(next)
+  }
   return (
     <Dashboard
       data={data}
@@ -15,8 +26,8 @@ function DashboardHarness({ initial = structuredClone(seed) as TreeData }: { ini
       authenticated
       onAuthenticated={() => undefined}
       onLogout={() => undefined}
-      onChange={setData}
-      onReset={() => setData(published)}
+      onChange={updateData}
+      onReset={() => updateData(published)}
     />
   )
 }
@@ -76,9 +87,69 @@ describe('Dashboard layout and people editor', () => {
     const dialog = screen.getByRole('dialog', { name: /Which branch does this child belong to/i })
     expect(within(dialog).getByRole('button', { name: 'second wife' })).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'New partner' })).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: 'Single parent' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Single parent' })).not.toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'second wife' }))
     expect(screen.getByText(/added as the youngest child/i)).toBeInTheDocument()
+  })
+
+  it('assigns children to the chosen Child 1 partner and auto-assigns from each partner', () => {
+    let initial = addPartner(structuredClone(seed) as TreeData, 'child-1', 'Wife', 'family-child-1')
+    initial = addPartner(initial, 'child-1', 'Sarah')
+    let latest = initial
+    render(<DashboardHarness initial={initial} onDataChange={(data) => { latest = data }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'People' }))
+    const list = screen.getByRole('complementary', { name: 'People' })
+
+    fireEvent.click(within(list).getByRole('button', { name: /^Child 1/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
+    const dialog = screen.getByRole('dialog', { name: /Which branch does this child belong to/i })
+    expect(within(dialog).getByRole('button', { name: 'Wife' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Sarah' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /single parent/i })).not.toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Wife' }))
+    const wifeChildId = latest.people.at(-1)!.id
+    expect(latest.families.find((family) => family.parentIds.includes('wife'))?.children.some((child) => child.personId === wifeChildId)).toBe(true)
+    expect(latest.families.find((family) => family.parentIds.includes('sarah'))?.children.some((child) => child.personId === wifeChildId)).toBe(false)
+
+    fireEvent.click(within(list).getByRole('button', { name: /^Sarah/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
+    expect(screen.queryByRole('dialog', { name: /Which branch does this child belong to/i })).not.toBeInTheDocument()
+    const sarahChildId = latest.people.at(-1)!.id
+    expect(latest.families.find((family) => family.parentIds.includes('sarah'))?.children.some((child) => child.personId === sarahChildId)).toBe(true)
+    expect(latest.families.find((family) => family.parentIds.includes('wife'))?.children.some((child) => child.personId === sarahChildId)).toBe(false)
+  })
+
+  it('adds immediately for zero partners and prefers the only partnership over a solo branch', () => {
+    const initial = addPartner(structuredClone(seed) as TreeData, 'child-1', 'Wife')
+    let latest = initial
+    render(<DashboardHarness initial={initial} onDataChange={(data) => { latest = data }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'People' }))
+    const list = screen.getByRole('complementary', { name: 'People' })
+
+    fireEvent.click(within(list).getByRole('button', { name: /^Child 2/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
+    expect(screen.queryByRole('dialog', { name: /Which branch does this child belong to/i })).not.toBeInTheDocument()
+    const soloChildId = latest.people.at(-1)!.id
+    expect(latest.families.find((family) => family.id === 'family-child-2')?.children.some((child) => child.personId === soloChildId)).toBe(true)
+
+    fireEvent.click(within(list).getByRole('button', { name: /^Child 1/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
+    expect(screen.queryByRole('dialog', { name: /Which branch does this child belong to/i })).not.toBeInTheDocument()
+    const partnerChildId = latest.people.at(-1)!.id
+    expect(latest.families.find((family) => family.parentIds.includes('wife'))?.children.some((child) => child.personId === partnerChildId)).toBe(true)
+    expect(latest.families.find((family) => family.id === 'family-child-1')?.children.some((child) => child.personId === partnerChildId)).toBe(false)
+  })
+
+  it('disambiguates duplicate partner names with portrait numbers', () => {
+    let initial = addPartner(structuredClone(seed) as TreeData, 'child-1', 'Wife', 'family-child-1')
+    initial = addPartner(initial, 'child-1', 'Wife')
+    render(<DashboardHarness initial={initial} />)
+    fireEvent.click(screen.getByRole('button', { name: 'People' }))
+    const list = screen.getByRole('complementary', { name: 'People' })
+    fireEvent.click(within(list).getByRole('button', { name: /^Child 1/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
+    const dialog = screen.getByRole('dialog', { name: /Which branch does this child belong to/i })
+    expect(within(dialog).getAllByRole('button', { name: /Wife · Portrait \d+/ })).toHaveLength(2)
   })
 
   it('synchronizes automatic portrait paths, preserves custom paths, and detects duplicates', () => {
@@ -111,6 +182,19 @@ describe('Dashboard layout and people editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive & export' }))
     expect(screen.getByRole('button', { name: 'Download JSON' })).toBeDisabled()
   })
+
+  it('shows death date only for dead people and clears it when restored to alive', () => {
+    openPeople()
+    expect(screen.queryByLabelText('Death date')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'dead' } })
+    const deathDate = screen.getByLabelText('Death date')
+    fireEvent.change(deathDate, { target: { value: '2020-03-04' } })
+    expect(deathDate).toHaveValue('2020-03-04')
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'alive' } })
+    expect(screen.queryByLabelText('Death date')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'dead' } })
+    expect(screen.getByLabelText('Death date')).toHaveValue('')
+  })
 })
 
 describe('Dashboard pets editor', () => {
@@ -133,5 +217,18 @@ describe('Dashboard pets editor', () => {
     fireEvent.click(within(list).getByRole('button', { name: 'Add' }))
     fireEvent.change(screen.getByLabelText(/Portrait number/i), { target: { value: '1' } })
     expect(screen.getByRole('alert')).toHaveTextContent('Pet portrait 1 is already assigned')
+  })
+
+  it('accepts a pet birth year and conditionally clears the death date', () => {
+    openPets()
+    const birthDate = screen.getByLabelText('Birth date or year')
+    expect(birthDate).toHaveValue('2013')
+    expect(birthDate).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('Death date')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('Death date'), { target: { value: '2024-05-01' } })
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'alive' } })
+    expect(screen.queryByLabelText('Death date')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'dead' } })
+    expect(screen.getByLabelText('Death date')).toHaveValue('')
   })
 })

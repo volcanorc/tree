@@ -15,6 +15,7 @@ import {
   isSafeExternalUrl,
   portraitCandidates,
   sortChildren,
+  yearFromDate,
 } from '../lib/data'
 import type { FamilyUnit, Person, Pet, PetFamilyUnit } from '../types'
 
@@ -25,6 +26,37 @@ interface NormalizedFamily {
   id: string
   parentIds: string[]
   children: Array<{ entityId: string; birthOrder: number }>
+}
+
+interface PartnerGroup {
+  id: string
+  entityIds: string[]
+  families: NormalizedFamily[]
+  entryEntityId: string
+  centerEntityId: string
+  layoutSlots: Record<string, number>
+  railDepth: number
+}
+
+interface ConnectorPath {
+  id: string
+  familyId: string
+  kind: 'union' | 'family-stem' | 'child'
+  parentIds: string[]
+  d: string
+}
+
+interface PetYearBand {
+  key: string
+  label: string
+  year: number | null
+  pets: Pet[]
+}
+
+interface PetSpeciesColumn {
+  key: string
+  label: string
+  width: number
 }
 
 interface LineageGraphProps {
@@ -55,6 +87,160 @@ function clampScale(value: number) {
 
 function isPet(entity: Entity): entity is Pet {
   return 'species' in entity
+}
+
+function buildPartnerGroups(families: NormalizedFamily[]) {
+  const parent = new Map<string, string>()
+  const find = (id: string): string => {
+    const current = parent.get(id)
+    if (!current) {
+      parent.set(id, id)
+      return id
+    }
+    if (current === id) return id
+    const root = find(current)
+    parent.set(id, root)
+    return root
+  }
+  const union = (left: string, right: string) => {
+    const leftRoot = find(left)
+    const rightRoot = find(right)
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot)
+  }
+
+  families.forEach((family) => {
+    family.parentIds.forEach((id) => find(id))
+    if (family.parentIds.length === 2) union(family.parentIds[0], family.parentIds[1])
+  })
+
+  const groupIds = new Map<string, string>()
+  const entityIdsByGroup = new Map<string, string[]>()
+  families.forEach((family) => {
+    family.parentIds.forEach((entityId) => {
+      const root = find(entityId)
+      const groupId = groupIds.get(root) ?? `partner-group-${groupIds.size + 1}`
+      groupIds.set(root, groupId)
+      const entityIds = entityIdsByGroup.get(groupId) ?? []
+      if (!entityIds.includes(entityId)) entityIds.push(entityId)
+      entityIdsByGroup.set(groupId, entityIds)
+    })
+  })
+
+  const familiesByGroup = new Map<string, NormalizedFamily[]>()
+  families.forEach((family) => {
+    const firstParent = family.parentIds[0]
+    if (!firstParent) return
+    const groupId = groupIds.get(find(firstParent))
+    if (!groupId) return
+    familiesByGroup.set(groupId, [...(familiesByGroup.get(groupId) ?? []), family])
+  })
+
+  const childOrder = new Map<string, number>()
+  families.forEach((family) => family.children.forEach((child) => {
+    if (!childOrder.has(child.entityId)) childOrder.set(child.entityId, childOrder.size)
+  }))
+
+  const groups: PartnerGroup[] = [...entityIdsByGroup.entries()].map(([id, entityIds]) => {
+    const groupFamilies = familiesByGroup.get(id) ?? []
+    const entryEntityId = [...entityIds]
+      .filter((entityId) => childOrder.has(entityId))
+      .sort((left, right) => childOrder.get(left)! - childOrder.get(right)!)[0] ?? entityIds[0]
+    const familyOrder = new Map(groupFamilies.map((family, index) => [family.id, index]))
+    const adjacency = new Map(entityIds.map((entityId) => [entityId, [] as Array<{ entityId: string; familyId: string }>]))
+    groupFamilies.forEach((family) => {
+      if (family.parentIds.length !== 2) return
+      const [left, right] = family.parentIds
+      adjacency.get(left)?.push({ entityId: right, familyId: family.id })
+      adjacency.get(right)?.push({ entityId: left, familyId: family.id })
+    })
+    adjacency.forEach((neighbors) => neighbors.sort((left, right) => (familyOrder.get(left.familyId) ?? 0) - (familyOrder.get(right.familyId) ?? 0)))
+
+    const centerEntityId = [...entityIds].sort((left, right) => {
+      const degreeDifference = (adjacency.get(right)?.length ?? 0) - (adjacency.get(left)?.length ?? 0)
+      if (degreeDifference) return degreeDifference
+      if (left === entryEntityId) return -1
+      if (right === entryEntityId) return 1
+      return entityIds.indexOf(left) - entityIds.indexOf(right)
+    })[0]
+    const layoutSlots = new Map<string, number>([[centerEntityId, 0]])
+    const queue = [centerEntityId]
+    let nextLeft = -1
+    let nextRight = 1
+    let centerNeighborIndex = 0
+    while (queue.length) {
+      const current = queue.shift()!
+      const currentSlot = layoutSlots.get(current) ?? 0
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (layoutSlots.has(neighbor.entityId)) continue
+        let slot: number
+        if (current === centerEntityId) {
+          slot = centerNeighborIndex % 2 === 0 ? nextLeft-- : nextRight++
+          centerNeighborIndex += 1
+        } else if (currentSlot < 0) slot = nextLeft--
+        else if (currentSlot > 0) slot = nextRight++
+        else slot = centerNeighborIndex++ % 2 === 0 ? nextLeft-- : nextRight++
+        layoutSlots.set(neighbor.entityId, slot)
+        queue.push(neighbor.entityId)
+      }
+    }
+    entityIds.forEach((entityId) => {
+      if (!layoutSlots.has(entityId)) layoutSlots.set(entityId, nextRight++)
+    })
+    const orderedEntityIds = [...entityIds].sort((left, right) => layoutSlots.get(left)! - layoutSlots.get(right)!)
+    const railDepth = Math.max(0, ...groupFamilies.map((family) => {
+      if (family.parentIds.length !== 2) return 0
+      return Math.max(0, Math.abs(layoutSlots.get(family.parentIds[0])! - layoutSlots.get(family.parentIds[1])!) - 1)
+    }))
+    return {
+      id,
+      entityIds: orderedEntityIds,
+      families: groupFamilies,
+      entryEntityId,
+      centerEntityId,
+      layoutSlots: Object.fromEntries(layoutSlots),
+      railDepth,
+    }
+  })
+  const groupByEntity = new Map(groups.flatMap((group) => group.entityIds.map((entityId) => [entityId, group] as const)))
+  return { groups, groupByEntity }
+}
+
+function buildPetYearBands(pets: Pet[]): PetYearBand[] {
+  const petsByYear = new Map<number | null, Array<{ pet: Pet; index: number }>>()
+  pets.forEach((pet, index) => {
+    const year = yearFromDate(pet.birthDate)
+    petsByYear.set(year, [...(petsByYear.get(year) ?? []), { pet, index }])
+  })
+  return [...petsByYear.entries()]
+    .sort(([left], [right]) => left === null ? 1 : right === null ? -1 : left - right)
+    .map(([year, entries]) => ({
+      key: year === null ? 'unknown' : String(year),
+      label: year === null ? 'Unknown year' : String(year),
+      year,
+      pets: entries
+        .sort((left, right) => {
+          const leftKey = /^\d{4}-\d{2}-\d{2}$/.test(left.pet.birthDate) ? left.pet.birthDate : `${year ?? 9999}-00-00`
+          const rightKey = /^\d{4}-\d{2}-\d{2}$/.test(right.pet.birthDate) ? right.pet.birthDate : `${year ?? 9999}-00-00`
+          return leftKey.localeCompare(rightKey) || left.index - right.index
+        })
+        .map(({ pet }) => pet),
+    }))
+}
+
+function petSpeciesKey(pet: Pet): string {
+  return pet.species.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'unknown-species'
+}
+
+function buildPetSpeciesColumns(pets: Pet[], bands: PetYearBand[]): PetSpeciesColumn[] {
+  const labels = new Map<string, string>()
+  pets.forEach((pet) => {
+    const key = petSpeciesKey(pet)
+    if (!labels.has(key)) labels.set(key, pet.species.trim() || 'Unknown species')
+  })
+  return [...labels.entries()].map(([key, label]) => {
+    const largestYearGroup = Math.max(1, ...bands.map((band) => band.pets.filter((pet) => petSpeciesKey(pet) === key).length))
+    return { key, label, width: largestYearGroup * 174 }
+  })
 }
 
 function PortraitFallback({ entity }: { entity: Entity }) {
@@ -88,12 +274,14 @@ function EntityPortrait({ entity }: { entity: Entity }) {
 function EntityCard({
   entity,
   owner,
+  layoutSlot,
   onHover,
   onLeave,
   onTouch,
 }: {
   entity: Entity
   owner?: Person
+  layoutSlot?: number
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onTouch: (entity: Entity) => void
@@ -111,6 +299,7 @@ function EntityCard({
       className={`entity-card ${isPet(entity) ? 'pet-card' : ''}`}
       type="button"
       data-entity-id={entity.id}
+      data-layout-slot={layoutSlot}
       aria-label={`${displayValue(entity.displayName)} details${safeLinks.length === 1 ? ', opens story link' : safeLinks.length > 1 ? `, ${safeLinks.length} story links available` : ''}`}
       onPointerEnter={(event) => onHover(entity, event.clientX, event.clientY)}
       onPointerMove={(event) => {
@@ -145,20 +334,24 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
   const top = Math.min(window.innerHeight - 300, Math.max(82, tooltip.y + 18))
   const style = pinned ? undefined : ({ left, top } as CSSProperties)
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
+  const age = calculateAge(entity.birthDate, entity.ageOverride, new Date(), entity.deathDate, entity.status, isPet(entity))
+  const diedRows = entity.status === 'dead' ? [['Died', displayValue(entity.deathDate)]] : []
   const rows = isPet(entity)
     ? [
         ['Species', displayValue(entity.species)],
         ['Breed', displayValue(entity.breed)],
-        ['Age', calculateAge(entity.birthDate, entity.ageOverride)],
+        ['Age', age],
         ['Born', bornValue(entity)],
+        ...diedRows,
         ['Gender', displayValue(entity.gender)],
         ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
         ['Owner', displayValue(owner?.displayName)],
         ['Personality', displayValue(entity.personality)],
       ]
     : [
-        ['Age', calculateAge(entity.birthDate, entity.ageOverride)],
+        ['Age', age],
         ['Born', bornValue(entity)],
+        ...diedRows,
         ['Gender', displayValue(entity.gender)],
         ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
         ['Personality', displayValue(entity.personality)],
@@ -191,7 +384,7 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
 function LineageBranch({
   entityId,
   entities,
-  families,
+  groupByEntity,
   people,
   path,
   onHover,
@@ -200,7 +393,7 @@ function LineageBranch({
 }: {
   entityId: string
   entities: Map<string, Entity>
-  families: NormalizedFamily[]
+  groupByEntity: Map<string, PartnerGroup>
   people: Person[]
   path: Set<string>
   onHover: (entity: Entity, x: number, y: number) => void
@@ -208,26 +401,43 @@ function LineageBranch({
   onTouch: (entity: Entity) => void
 }) {
   const entity = entities.get(entityId)
-  if (!entity || path.has(entityId)) return null
-  const nextPath = new Set(path).add(entityId)
-  const units = families.filter((family) => family.parentIds.includes(entityId))
-  const partnerIds = [...new Set(units.flatMap((family) => family.parentIds.filter((id) => id !== entityId)))]
-  const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
+  if (!entity) return null
+  const group = groupByEntity.get(entityId)
+  if (!group) {
+    const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
+    return (
+      <div className="lineage-branch">
+        <div className="partner-group-row">
+          <EntityCard entity={entity} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+        </div>
+      </div>
+    )
+  }
+  if (path.has(group.id)) return null
+  if (entityId !== group.entryEntityId) return null
+  const nextPath = new Set(path).add(group.id)
+  const orderedFamilies = [...group.families].sort((left, right) => {
+    const position = (family: NormalizedFamily) => family.parentIds.reduce((total, id) => total + (group.layoutSlots[id] ?? 0), 0) / family.parentIds.length
+    return position(left) - position(right) || group.families.indexOf(left) - group.families.indexOf(right)
+  })
   return (
-    <div className={`lineage-branch ${units.length > 1 ? 'has-multiple-unions' : ''}`}>
-      <div className="parent-unit">
-        <EntityCard entity={entity} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
-        {partnerIds.map((partnerId) => {
-          const partner = entities.get(partnerId)
-          if (!partner) return null
-          const partnerOwner = isPet(partner) ? people.find((person) => person.id === partner.ownerPersonId) : undefined
-          return <EntityCard key={partnerId} entity={partner} owner={partnerOwner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+    <div
+      className={`lineage-branch ${group.families.length > 1 ? 'has-multiple-unions' : ''}`}
+      data-partner-group={group.id}
+      data-center-entity-id={group.centerEntityId}
+    >
+      <div className="partner-group-row">
+        {group.entityIds.map((groupEntityId) => {
+          const groupEntity = entities.get(groupEntityId)
+          if (!groupEntity) return null
+          const owner = isPet(groupEntity) ? people.find((person) => person.id === groupEntity.ownerPersonId) : undefined
+          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
         })}
       </div>
-      {units.length > 0 && (
-        <div className="family-units-row">
-          {units.map((family) => (
-            <div className="family-unit-branch" key={family.id}>
+      {group.families.length > 0 && (
+        <div className="family-units-row" style={{ paddingTop: group.railDepth * 10 }}>
+          {orderedFamilies.map((family) => (
+            <div className="family-unit-branch" key={family.id} data-family-id={family.id} data-parent-ids={family.parentIds.join(' ')}>
               <span className="family-anchor" data-family-anchor={family.id} aria-hidden="true" />
               {family.children.length > 0 && (
                 <div className="children-row">
@@ -236,7 +446,7 @@ function LineageBranch({
                       key={child.entityId}
                       entityId={child.entityId}
                       entities={entities}
-                      families={families}
+                      groupByEntity={groupByEntity}
                       people={people}
                       path={nextPath}
                       onHover={onHover}
@@ -254,6 +464,48 @@ function LineageBranch({
   )
 }
 
+function PetYearTimeline({
+  bands,
+  speciesColumns,
+  families,
+  people,
+  onHover,
+  onLeave,
+  onTouch,
+}: {
+  bands: PetYearBand[]
+  speciesColumns: PetSpeciesColumn[]
+  families: NormalizedFamily[]
+  people: Person[]
+  onHover: (entity: Entity, x: number, y: number) => void
+  onLeave: () => void
+  onTouch: (entity: Entity) => void
+}) {
+  const gridStyle = { gridTemplateColumns: `96px ${speciesColumns.map((column) => `${column.width}px`).join(' ')}` } as CSSProperties
+  return (
+    <div className="pet-year-timeline" data-testid="pet-year-timeline" style={gridStyle}>
+      <span className="pet-timeline-corner" aria-hidden="true" />
+      {speciesColumns.map((column) => <h3 className="pet-species-label" data-pet-species-heading={column.key} key={column.key}>{column.label}</h3>)}
+      {bands.map((band) => (
+        <section className="pet-year-band" data-pet-year={band.key} key={band.key}>
+          <h3 className="pet-year-label">{band.label}</h3>
+          {speciesColumns.map((column) => (
+            <div className="pet-species-year-cell" data-pet-species={column.key} key={column.key}>
+              {band.pets.filter((pet) => petSpeciesKey(pet) === column.key).map((pet) => {
+                const owner = people.find((person) => person.id === pet.ownerPersonId)
+                return <EntityCard key={pet.id} entity={pet} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+              })}
+            </div>
+          ))}
+        </section>
+      ))}
+      <div className="pet-family-markers" aria-hidden="true">
+        {families.map((family) => <span key={family.id} data-family-id={family.id} data-parent-ids={family.parentIds.join(' ')} />)}
+      </div>
+    </div>
+  )
+}
+
 export function LineageGraph({ mode, people, families, pets, petFamilies }: LineageGraphProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -262,7 +514,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const wheelTimer = useRef<number | null>(null)
   const [view, setView] = useState<ViewState>({ x: 24, y: 24, scale: 0.82 })
   const viewRef = useRef(view)
-  const [paths, setPaths] = useState<string[]>([])
+  const [paths, setPaths] = useState<ConnectorPath[]>([])
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [interacting, setInteracting] = useState(false)
   useEffect(() => { viewRef.current = view }, [view])
@@ -277,37 +529,41 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
       : petFamilies.map((family) => ({ id: family.id, parentIds: family.parentPetIds, children: family.children.map((child) => ({ entityId: child.petId, birthOrder: child.birthOrder })) })),
     [mode, families, petFamilies],
   )
+  const { groups: partnerGroups, groupByEntity } = useMemo(() => buildPartnerGroups(normalizedFamilies), [normalizedFamilies])
+  const petYearBands = useMemo(() => buildPetYearBands(pets), [pets])
+  const petSpeciesColumns = useMemo(() => buildPetSpeciesColumns(pets, petYearBands), [petYearBands, pets])
   const childIds = useMemo(() => new Set(normalizedFamilies.flatMap((family) => family.children.map((child) => child.entityId))), [normalizedFamilies])
-  const roots = useMemo(() => {
-    const rootIds = normalizedFamilies
-      .filter((family) => family.parentIds.every((id) => !childIds.has(id)))
-      .map((family) => family.parentIds[0])
-      .filter(Boolean)
-    const deduped = [...new Set(rootIds)]
-    return deduped.length ? deduped : [...entities.keys()].filter((id) => !childIds.has(id)).slice(0, 1)
-  }, [childIds, entities, normalizedFamilies])
+  const childGroupIds = useMemo(() => new Set([...childIds].map((id) => groupByEntity.get(id)?.id).filter((id): id is string => Boolean(id))), [childIds, groupByEntity])
+  const rootGroups = useMemo(() => {
+    const roots = partnerGroups.filter((group) => !childGroupIds.has(group.id))
+    return roots.length ? roots : partnerGroups.slice(0, 1)
+  }, [childGroupIds, partnerGroups])
   const usedIds = useMemo(() => new Set(normalizedFamilies.flatMap((family) => [...family.parentIds, ...family.children.map((child) => child.entityId)])), [normalizedFamilies])
-  const standalone = useMemo(() => [...entities.keys()].filter((id) => !usedIds.has(id) && !roots.includes(id)), [entities, roots, usedIds])
+  const standalone = useMemo(() => [...entities.keys()].filter((id) => !usedIds.has(id)), [entities, usedIds])
   const branchUnits = useMemo(() => {
-    const countBranch = (entityId: string, path: Set<string>): number => {
-      if (path.has(entityId)) return 1
-      const units = normalizedFamilies.filter((family) => family.parentIds.includes(entityId) && family.children.length)
-      if (!units.length) return 1
-      const nextPath = new Set(path).add(entityId)
-      return Math.max(1, units.reduce((unitTotal, unit) => unitTotal + unit.children.reduce((total, child) => total + countBranch(child.entityId, nextPath), 0), 0))
+    const countBranch = (group: PartnerGroup, path: Set<string>): number => {
+      if (path.has(group.id)) return 1
+      const nextPath = new Set(path).add(group.id)
+      const childUnits = group.families.reduce((unitTotal, family) => unitTotal + family.children.reduce((total, child) => {
+        const childGroup = groupByEntity.get(child.entityId)
+        return total + (childGroup ? countBranch(childGroup, nextPath) : 1)
+      }, 0), 0)
+      return Math.max(group.entityIds.length, childUnits, 1)
     }
-    return Math.max(1, roots.reduce((total, rootId) => total + countBranch(rootId, new Set()), standalone.length))
-  }, [normalizedFamilies, roots, standalone.length])
-  const canvasWidth = Math.max(1160, branchUnits * 174 + Math.max(0, roots.length - 1) * 32)
+    return Math.max(1, rootGroups.reduce((total, group) => total + countBranch(group, new Set()), standalone.length))
+  }, [groupByEntity, rootGroups, standalone.length])
+  const petTimelineWidth = 96 + petSpeciesColumns.reduce((total, column) => total + column.width, 0) + petSpeciesColumns.length * 48 + 160
+  const canvasWidth = mode === 'pets'
+    ? Math.max(1160, petTimelineWidth)
+    : Math.max(1160, branchUnits * 174 + Math.max(0, rootGroups.length - 1) * 32)
 
   const measureConnectors = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const anchors = [...canvas.querySelectorAll<HTMLElement>('[data-family-anchor]')]
     const entityMap = new Map([...canvas.querySelectorAll<HTMLElement>('[data-entity-id]')].map((element) => [element.dataset.entityId ?? '', element]))
-    const pointInCanvas = (element: HTMLElement, vertical: 'center' | 'top') => {
+    const pointInCanvas = (element: HTMLElement, vertical: 'center' | 'top' | 'bottom') => {
       let x = element.offsetLeft + element.offsetWidth / 2
-      let y = element.offsetTop + (vertical === 'center' ? element.offsetHeight / 2 : 0)
+      let y = element.offsetTop + (vertical === 'center' ? element.offsetHeight / 2 : vertical === 'bottom' ? element.offsetHeight : 0)
       let parent = element.offsetParent as HTMLElement | null
       while (parent && parent !== canvas) {
         x += parent.offsetLeft
@@ -316,21 +572,95 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
       }
       return { x, y }
     }
-    const next: string[] = []
+    const next: ConnectorPath[] = []
+    if (mode === 'pets') {
+      normalizedFamilies.forEach((family) => {
+        const parentPoints = family.parentIds
+          .map((id) => entityMap.get(id))
+          .filter((element): element is HTMLElement => Boolean(element))
+          .map((element) => pointInCanvas(element, 'center'))
+        if (!parentPoints.length) return
+        const start = parentPoints.length === 1
+          ? parentPoints[0]
+          : { x: (parentPoints[0].x + parentPoints[1].x) / 2, y: (parentPoints[0].y + parentPoints[1].y) / 2 }
+        if (parentPoints.length === 2) next.push({
+          id: `${family.id}-union`,
+          familyId: family.id,
+          kind: 'union',
+          parentIds: family.parentIds,
+          d: `M ${parentPoints[0].x} ${parentPoints[0].y} L ${parentPoints[1].x} ${parentPoints[1].y}`,
+        })
+        family.children.forEach((child) => {
+          const target = entityMap.get(child.entityId)
+          if (!target) return
+          const end = pointInCanvas(target, 'top')
+          const midY = start.y + (end.y - start.y) / 2
+          next.push({
+            id: `${family.id}-child-${child.entityId}`,
+            familyId: family.id,
+            kind: 'child',
+            parentIds: family.parentIds,
+            d: `M ${start.x} ${start.y} V ${midY} H ${end.x} V ${end.y}`,
+          })
+        })
+      })
+      setPaths(next)
+      return
+    }
+    const anchors = [...canvas.querySelectorAll<HTMLElement>('[data-family-anchor]')]
     anchors.forEach((anchor) => {
       const family = normalizedFamilies.find((item) => item.id === anchor.dataset.familyAnchor)
       if (!family) return
-      const start = pointInCanvas(anchor, 'center')
+      const parentElements = family.parentIds.map((id) => entityMap.get(id)).filter((element): element is HTMLElement => Boolean(element))
+      const parentPoints = parentElements.map((element) => pointInCanvas(element, 'center'))
+      if (!parentPoints.length) return
+      let start = parentPoints.length === 1
+        ? parentPoints[0]
+        : { x: (parentPoints[0].x + parentPoints[1].x) / 2, y: (parentPoints[0].y + parentPoints[1].y) / 2 }
+      if (parentPoints.length === 2) {
+        const row = parentElements[0].closest('.partner-group-row')
+        const sameRow = row && row === parentElements[1].closest('.partner-group-row')
+        const leftX = Math.min(parentPoints[0].x, parentPoints[1].x)
+        const rightX = Math.max(parentPoints[0].x, parentPoints[1].x)
+        const blockers = sameRow
+          ? [...row.querySelectorAll<HTMLElement>(':scope > [data-entity-id]')]
+              .filter((element) => !parentElements.includes(element))
+              .map((element) => pointInCanvas(element, 'center'))
+              .filter((point) => point.x > leftX && point.x < rightX)
+          : []
+        let d = `M ${parentPoints[0].x} ${parentPoints[0].y} H ${parentPoints[1].x}`
+        if (blockers.length) {
+          const bottomPoints = parentElements.map((element) => pointInCanvas(element, 'bottom'))
+          const railY = Math.max(bottomPoints[0].y, bottomPoints[1].y) + 10 + blockers.length * 10
+          d = `M ${bottomPoints[0].x} ${bottomPoints[0].y} V ${railY} H ${bottomPoints[1].x} V ${bottomPoints[1].y}`
+          start = { x: (bottomPoints[0].x + bottomPoints[1].x) / 2, y: railY }
+        }
+        next.push({ id: `${family.id}-union`, familyId: family.id, kind: 'union', parentIds: family.parentIds, d })
+      }
+      const anchorPoint = pointInCanvas(anchor, 'center')
+      if (family.children.length > 0) next.push({
+        id: `${family.id}-stem`,
+        familyId: family.id,
+        kind: 'family-stem',
+        parentIds: family.parentIds,
+        d: `M ${start.x} ${start.y} V ${anchorPoint.y} H ${anchorPoint.x}`,
+      })
       family.children.forEach((child) => {
         const target = entityMap.get(child.entityId)
         if (!target) return
         const end = pointInCanvas(target, 'top')
-        const midY = start.y + Math.max(34, (end.y - start.y) * 0.42)
-        next.push(`M ${start.x} ${start.y} V ${midY} H ${end.x} V ${end.y}`)
+        const midY = anchorPoint.y + Math.max(34, (end.y - anchorPoint.y) * 0.42)
+        next.push({
+          id: `${family.id}-child-${child.entityId}`,
+          familyId: family.id,
+          kind: 'child',
+          parentIds: family.parentIds,
+          d: `M ${anchorPoint.x} ${anchorPoint.y} V ${midY} H ${end.x} V ${end.y}`,
+        })
       })
     })
     setPaths(next)
-  }, [normalizedFamilies])
+  }, [mode, normalizedFamilies])
 
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(measureConnectors)
@@ -495,11 +825,25 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
         }}
       >
         <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
-          <svg className="connector-layer" aria-hidden="true">{paths.map((path, index) => <path key={`${path}-${index}`} d={path} />)}</svg>
-          <div className="root-forest">
-            {roots.map((rootId) => <LineageBranch key={rootId} entityId={rootId} entities={entities} families={normalizedFamilies} people={people} path={new Set()} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />)}
-          </div>
-          {standalone.length > 0 && (
+          <svg className="connector-layer" aria-hidden="true">
+            {paths.map((path) => (
+              <path
+                key={path.id}
+                d={path.d}
+                data-family-connector={path.familyId}
+                data-connector-kind={path.kind}
+                data-parent-ids={path.parentIds.join(' ')}
+              />
+            ))}
+          </svg>
+          {mode === 'pets' ? (
+            <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+          ) : (
+            <div className="root-forest">
+              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />)}
+            </div>
+          )}
+          {mode === 'people' && standalone.length > 0 && (
             <div className="standalone-row">
               {standalone.map((id) => {
                 const entity = entities.get(id)

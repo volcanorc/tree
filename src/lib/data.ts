@@ -38,17 +38,33 @@ export function calculateAge(
   birthDate: string,
   ageOverride: number | null,
   today = new Date(),
+  deathDate = '',
+  status: LifeStatus = 'alive',
+  allowYearOnly = false,
 ): number | '?' {
-  if (birthDate) {
-    const birth = new Date(`${birthDate}T00:00:00`)
-    if (!Number.isNaN(birth.getTime()) && birth <= today) {
-      let age = today.getFullYear() - birth.getFullYear()
-      const monthDelta = today.getMonth() - birth.getMonth()
-      if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) age -= 1
-      return Math.max(0, age)
-    }
+  const override = typeof ageOverride === 'number' && ageOverride >= 0 ? ageOverride : null
+  if (allowYearOnly && /^\d{4}$/.test(birthDate)) {
+    if (override !== null) return override
+    const end = status === 'dead' ? parseFullDate(deathDate) : today
+    if (!end) return '?'
+    return Math.max(0, end.getFullYear() - Number(birthDate))
   }
-  return typeof ageOverride === 'number' && ageOverride >= 0 ? ageOverride : '?'
+  const birth = parseFullDate(birthDate)
+  if (birth && birth <= today) {
+    const end = status === 'dead' ? parseFullDate(deathDate) : today
+    if (!end) return override ?? '?'
+    let age = end.getFullYear() - birth.getFullYear()
+    const monthDelta = end.getMonth() - birth.getMonth()
+    if (monthDelta < 0 || (monthDelta === 0 && end.getDate() < birth.getDate())) age -= 1
+    return Math.max(0, age)
+  }
+  return override ?? '?'
+}
+
+export function yearFromDate(value: string): number | null {
+  if (/^\d{4}$/.test(value)) return Number(value)
+  const date = parseFullDate(value)
+  return date ? date.getFullYear() : null
 }
 
 export function sortChildren<T extends { birthOrder: number }>(children: T[]): T[] {
@@ -121,11 +137,32 @@ function duplicateValues(values: string[]): string[] {
   return [...duplicates]
 }
 
-function validateDate(value: string, label: string, errors: string[]): void {
-  if (!value) return
+function parseFullDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
   const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime())) errors.push(`${label} has an invalid birth date.`)
-  else if (date > new Date()) errors.push(`${label} has a birth date in the future.`)
+  if (Number.isNaN(date.getTime())) return null
+  const [year, month, day] = value.split('-').map(Number)
+  return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day ? date : null
+}
+
+function validateDate(value: string, label: string, field: 'birth' | 'death', errors: string[], allowYearOnly = false): void {
+  if (!value) return
+  const yearOnly = allowYearOnly && /^\d{4}$/.test(value)
+  const date = yearOnly ? new Date(`${value}-01-01T00:00:00`) : parseFullDate(value)
+  if (!date || Number(value.slice(0, 4)) < 1) errors.push(`${label} has an invalid ${field} date.`)
+  else if (yearOnly ? Number(value) > new Date().getFullYear() : date > new Date()) errors.push(`${label} has a ${field} date in the future.`)
+}
+
+function validateLifeDates(entity: Pick<Person | Pet, 'displayName' | 'id' | 'birthDate' | 'deathDate' | 'status'>, errors: string[], allowBirthYear: boolean): void {
+  const label = entity.displayName || entity.id
+  validateDate(entity.birthDate, label, 'birth', errors, allowBirthYear)
+  validateDate(entity.deathDate, label, 'death', errors)
+  if (entity.status === 'alive' && entity.deathDate) errors.push(`${label} cannot have a death date while marked alive.`)
+  const birthYear = yearFromDate(entity.birthDate)
+  const death = parseFullDate(entity.deathDate)
+  if (birthYear !== null && death && (death.getFullYear() < birthYear || (parseFullDate(entity.birthDate)?.getTime() ?? 0) > death.getTime())) {
+    errors.push(`${label} has a death date before the birth date.`)
+  }
 }
 
 function hasCycle(families: FamilyUnit[]): boolean {
@@ -187,8 +224,9 @@ function iringBrown(): Pet {
     species: 'Cat',
     breed: '',
     gender: 'female',
-    birthDate: '',
+    birthDate: '2013',
     birthDetails: 'Trash can',
+    deathDate: '',
     ageOverride: 11,
     personality: 'Slow',
     biography: '',
@@ -215,9 +253,9 @@ export function migrateTreeData(input: unknown): TreeData {
     petFamilies?: Array<Partial<PetFamilyUnit>>
   }
   const raw = input as LegacyTreeData
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) throw new Error('Unsupported or missing data version.')
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4) throw new Error('Unsupported or missing data version.')
   const rawPeople = Array.isArray(raw.people) ? raw.people : []
-  const hasVersionTwoFields = raw.version === 2 || raw.version === 3
+  const hasVersionTwoFields = raw.version === 2 || raw.version === 3 || raw.version === 4
   const occupied = new Set<number>()
   if (hasVersionTwoFields) {
     rawPeople.forEach((person) => {
@@ -250,6 +288,7 @@ export function migrateTreeData(input: unknown): TreeData {
       gender: (person.gender ?? 'unknown') as Gender,
       birthDate: stringValue(person.birthDate),
       birthDetails: stringValue(person.birthDetails),
+      deathDate: stringValue(person.deathDate),
       ageOverride: numberOrNull(person.ageOverride),
       personality: stringValue(person.personality),
       biography: stringValue(person.biography),
@@ -264,7 +303,7 @@ export function migrateTreeData(input: unknown): TreeData {
   })
   const rawPets = Array.isArray(raw.pets) ? raw.pets : []
   const occupiedPetPortraits = new Set<number>()
-  if (raw.version === 3) {
+  if (raw.version === 3 || raw.version === 4) {
     rawPets.forEach((pet) => {
       if (Number.isInteger(pet.portraitNumber) && Number(pet.portraitNumber) > 0) occupiedPetPortraits.add(Number(pet.portraitNumber))
     })
@@ -280,7 +319,7 @@ export function migrateTreeData(input: unknown): TreeData {
     return number
   }
   const pets: Pet[] = rawPets.map((pet) => {
-    const portraitNumber = raw.version === 3
+    const portraitNumber = raw.version === 3 || raw.version === 4
       ? Number(pet.portraitNumber)
       : stringValue(pet.id) === 'iring-brown' ? 1 : takeNextPetPortrait()
     const links = Array.isArray(pet.links)
@@ -294,6 +333,7 @@ export function migrateTreeData(input: unknown): TreeData {
       gender: (pet.gender ?? 'unknown') as Gender,
       birthDate: stringValue(pet.birthDate),
       birthDetails: stringValue(pet.birthDetails),
+      deathDate: stringValue(pet.deathDate),
       ageOverride: numberOrNull(pet.ageOverride),
       personality: stringValue(pet.personality),
       biography: stringValue(pet.biography),
@@ -308,12 +348,14 @@ export function migrateTreeData(input: unknown): TreeData {
     }
   })
   const existingIring = pets.find((pet) => pet.id === 'iring-brown')
-  if (existingIring && raw.version !== 3) existingIring.protected = true
-  else if (!existingIring) pets.unshift(iringBrown())
+  if (existingIring) {
+    if (!existingIring.birthDate) existingIring.birthDate = '2013'
+    if (raw.version === 1 || raw.version === 2) existingIring.protected = true
+  } else pets.unshift(iringBrown())
   const site = raw.site ?? ({} as TreeData['site'])
   const subtitle = stringValue(site.subtitle)
   return {
-    version: 3,
+    version: 4,
     site: {
       title: stringValue(site.title),
       subtitle: !subtitle || subtitle === OLD_DEFAULT_SUBTITLE ? DEFAULT_SUBTITLE : subtitle,
@@ -342,7 +384,7 @@ export function migrateTreeData(input: unknown): TreeData {
 
 export function validateTreeData(data: TreeData): ValidationResult {
   const errors: string[] = []
-  if (!data || data.version !== 3) errors.push('Unsupported or missing data version.')
+  if (!data || data.version !== 4) errors.push('Unsupported or missing data version.')
   if (!data.site?.title?.trim()) errors.push('The site title is required.')
 
   const personIds = data.people.map((person) => person.id)
@@ -376,7 +418,7 @@ export function validateTreeData(data: TreeData): ValidationResult {
     if (!person.id.trim()) errors.push('Every person requires an ID.')
     if (!Number.isInteger(person.portraitNumber) || person.portraitNumber < 1) errors.push(`${person.displayName || person.id} has an invalid portrait number.`)
     if (!LIFE_STATUSES.has(person.status)) errors.push(`${person.displayName || person.id} has an invalid status.`)
-    validateDate(person.birthDate, person.displayName || person.id, errors)
+    validateLifeDates(person, errors, false)
     if (!Array.isArray(person.links)) errors.push(`${person.displayName || person.id} has an invalid links list.`)
     else person.links.forEach((link, index) => {
       if (!isSafeExternalUrl(link)) errors.push(`${person.displayName || person.id} has an unsafe link at position ${index + 1}.`)
@@ -399,7 +441,7 @@ export function validateTreeData(data: TreeData): ValidationResult {
   data.pets.forEach((pet) => {
     if (!Number.isInteger(pet.portraitNumber) || pet.portraitNumber < 1) errors.push(`${pet.displayName || pet.id} has an invalid pet portrait number.`)
     if (!LIFE_STATUSES.has(pet.status)) errors.push(`${pet.displayName || pet.id} has an invalid status.`)
-    validateDate(pet.birthDate, pet.displayName || pet.id, errors)
+    validateLifeDates(pet, errors, true)
     if (pet.ownerPersonId && !people.has(pet.ownerPersonId)) errors.push(`${pet.displayName || pet.id} references a missing owner.`)
     if (!Array.isArray(pet.links)) errors.push(`${pet.displayName || pet.id} has an invalid links list.`)
     else pet.links.forEach((link, index) => {
@@ -469,6 +511,7 @@ export function createBlankPerson(id: string, label: string, portraitNumber = 1)
     gender: 'unknown',
     birthDate: '',
     birthDetails: '',
+    deathDate: '',
     ageOverride: null,
     personality: '',
     biography: '',
@@ -491,6 +534,7 @@ export function createBlankPet(id: string, label: string, portraitNumber = 1): P
     gender: 'unknown',
     birthDate: '',
     birthDetails: '',
+    deathDate: '',
     ageOverride: null,
     personality: '',
     biography: '',

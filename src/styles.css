@@ -135,14 +135,20 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .connector-layer path { fill: none; stroke: rgba(145, 164, 191, 0.58); stroke-width: 1.1; vector-effect: non-scaling-stroke; }
 .root-forest, .standalone-row { position: relative; z-index: 1; display: flex; justify-content: center; align-items: flex-start; gap: 32px; }
 .lineage-branch { display: flex; flex-direction: column; align-items: center; min-width: 154px; }
-.parent-unit { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 16px; }
-.parent-unit:has(.entity-card + .entity-card)::before { content: ''; position: absolute; top: 53px; left: 70px; right: 70px; height: 1px; background: var(--copper); opacity: 0.75; }
+.partner-group-row { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 16px; }
 .family-units-row { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 32px; width: 100%; }
 .family-unit-branch { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 154px; padding-top: 30px; }
-.family-unit-branch::before { content: ''; position: absolute; left: 50%; top: 0; width: 1px; height: 30px; background: rgba(200,131,85,.7); }
 .family-anchor { position: absolute; width: 4px; height: 4px; left: 50%; top: 28px; transform: translateX(-50%); }
 .children-row { display: flex; align-items: flex-start; justify-content: center; gap: 22px; padding-top: 76px; }
 .children-row .children-row { gap: 14px; padding-top: 83px; }
+.pet-year-timeline { position: relative; z-index: 1; display: grid; justify-content: center; align-items: start; column-gap: 48px; row-gap: 94px; padding: 10px 80px 130px; }
+.pet-year-band { display: contents; }
+.pet-timeline-corner { min-height: 24px; }
+.pet-species-label, .pet-year-label { margin: 0; color: var(--copper-light); font-family: inherit; font-size: .72rem; font-weight: 600; letter-spacing: .24em; text-align: center; text-transform: uppercase; }
+.pet-species-label { padding-bottom: 15px; border-bottom: 1px solid rgba(200,131,85,.24); }
+.pet-year-label { align-self: start; padding-top: 46px; color: #8d9bb0; }
+.pet-species-year-cell { display: flex; align-items: flex-start; justify-content: center; gap: 34px; min-height: 164px; }
+.pet-family-markers { position: absolute; width: 0; height: 0; overflow: hidden; }
 .entity-card { position: relative; width: 140px; padding: 0; display: flex; flex-direction: column; align-items: center; border: 0; background: transparent; color: #e6e7e9; cursor: pointer; }
 .portrait-ring { width: 106px; height: 106px; display: grid; place-items: center; padding: 4px; border: 1px solid rgba(200, 131, 85, 0.74); border-radius: 50%; background: linear-gradient(135deg, rgba(200, 131, 85, 0.19), rgba(90, 111, 141, 0.05)); box-shadow: 0 0 0 5px rgba(112, 133, 163, 0.04); transition: transform 240ms ease, border-color 240ms ease, box-shadow 240ms ease; }
 .entity-card:hover .portrait-ring, .entity-card:focus-visible .portrait-ring { transform: translateY(-4px) scale(1.035); border-color: var(--copper-light); box-shadow: 0 10px 38px rgba(0,0,0,.5), 0 0 0 6px rgba(200, 131, 85, 0.07); }

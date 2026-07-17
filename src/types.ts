@@ -16,6 +16,7 @@ export interface Person {
   gender: Gender
   birthDate: string
   birthDetails: string
+  deathDate: string
   ageOverride: number | null
   personality: string
   biography: string
@@ -47,6 +48,7 @@ export interface Pet {
   gender: Gender
   birthDate: string
   birthDetails: string
+  deathDate: string
   ageOverride: number | null
   personality: string
   biography: string
@@ -72,7 +74,7 @@ export interface PetFamilyUnit {
 }
 
 export interface TreeData {
-  version: 3
+  version: 4
   site: SiteConfig
   people: Person[]
   families: FamilyUnit[]

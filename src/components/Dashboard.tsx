@@ -65,9 +65,9 @@ const petTextFields: Array<{
   { key: 'displayName', label: 'Name', placeholder: 'Pet name' },
   { key: 'species', label: 'Species', placeholder: 'Dog, cat, bird…' },
   { key: 'breed', label: 'Breed', placeholder: '?' },
-  { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY-MM-DD' },
+  { key: 'birthDate', label: 'Birth date or year', placeholder: 'YYYY or YYYY-MM-DD' },
   { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
-  { key: 'ageOverride', label: 'Age override', placeholder: 'Used only when birth date is empty' },
+  { key: 'ageOverride', label: 'Age override', placeholder: 'Used first for a year-only or unknown birth date' },
   { key: 'personality', label: 'Personality', placeholder: 'Temperament and favorite things' },
   { key: 'biography', label: 'Short biography', placeholder: 'A short public story', textarea: true },
   { key: 'portrait', label: 'Portrait path or HTTPS PNG URL', placeholder: 'portraits/pets/1.png' },
@@ -205,6 +205,19 @@ export function Dashboard(props: DashboardProps) {
 
   const selectedPerson = data.people.find((person) => person.id === selectedPersonId) ?? data.people[0]
   const selectedPet = data.pets.find((pet) => pet.id === selectedPetId) ?? data.pets[0]
+  const selectedPartnerUnits = selectedPerson
+    ? data.families.filter((family) => family.parentIds.length === 2 && family.parentIds.includes(selectedPerson.id))
+    : []
+  const childPartnerChoices = selectedPartnerUnits.map((family) => {
+    const partnerId = family.parentIds.find((id) => id !== selectedPerson?.id) ?? ''
+    const partner = data.people.find((person) => person.id === partnerId)
+    return { family, partner, baseLabel: partner?.displayName.trim() || partnerId || '?' }
+  }).map((choice, _index, choices) => ({
+    ...choice,
+    label: choices.filter((candidate) => candidate.baseLabel === choice.baseLabel).length > 1
+      ? `${choice.baseLabel} · Portrait ${choice.partner?.portraitNumber ?? '?'}`
+      : choice.baseLabel,
+  }))
   const selectedBirthOrder = selectedPerson ? getBirthOrder(data, selectedPerson.id) : null
   const selectedPetBirthOrder = selectedPet ? getPetBirthOrder(data, selectedPet.id) : null
   const personPortraitNumberError = selectedPerson
@@ -264,12 +277,16 @@ export function Dashboard(props: DashboardProps) {
 
   function addPersonChild() {
     if (!selectedPerson) return
-    const units = data.families.filter((family) => family.parentIds.includes(selectedPerson.id))
-    if (units.length > 1) {
+    if (selectedPartnerUnits.length > 1) {
       setShowChildChooser(true)
       return
     }
-    completeAddPersonChild(units[0]?.id)
+    if (selectedPartnerUnits.length === 1) {
+      completeAddPersonChild(selectedPartnerUnits[0].id)
+      return
+    }
+    const singleParentUnit = data.families.find((family) => family.parentIds.length === 1 && family.parentIds[0] === selectedPerson.id)
+    completeAddPersonChild(singleParentUnit?.id ?? 'single')
   }
 
   function completeAddPersonChild(familyId?: string | 'single') {
@@ -614,11 +631,23 @@ export function Dashboard(props: DashboardProps) {
                     </label>
                     <label>
                       Status
-                      <select value={selectedPerson.status} onChange={(event) => updatePerson({ status: event.target.value as Person['status'] })}>
+                      <select
+                        value={selectedPerson.status}
+                        onChange={(event) => {
+                          const nextStatus = event.target.value as Person['status']
+                          updatePerson({ status: nextStatus, ...(nextStatus === 'alive' ? { deathDate: '' } : {}) })
+                        }}
+                      >
                         <option value="alive">Alive</option>
                         <option value="dead">Dead</option>
                       </select>
                     </label>
+                    {selectedPerson.status === 'dead' && (
+                      <label>
+                        Death date
+                        <input type="date" value={selectedPerson.deathDate} onChange={(event) => updatePerson({ deathDate: event.target.value })} />
+                      </label>
+                    )}
                     <label>
                       Portrait number
                       <input
@@ -699,7 +728,7 @@ export function Dashboard(props: DashboardProps) {
                           <input
                             value={String(selectedPet[field.key] ?? '')}
                             placeholder={field.placeholder}
-                            type={field.key === 'birthDate' ? 'date' : field.key === 'ageOverride' ? 'number' : 'text'}
+                            type={field.key === 'ageOverride' ? 'number' : 'text'}
                             min={field.key === 'ageOverride' ? 0 : undefined}
                             onChange={(event) => updatePet({
                               [field.key]: field.key === 'ageOverride'
@@ -726,11 +755,23 @@ export function Dashboard(props: DashboardProps) {
                     </label>
                     <label>
                       Status
-                      <select value={selectedPet.status} onChange={(event) => updatePet({ status: event.target.value as Pet['status'] })}>
+                      <select
+                        value={selectedPet.status}
+                        onChange={(event) => {
+                          const nextStatus = event.target.value as Pet['status']
+                          updatePet({ status: nextStatus, ...(nextStatus === 'alive' ? { deathDate: '' } : {}) })
+                        }}
+                      >
                         <option value="alive">Alive</option>
                         <option value="dead">Dead</option>
                       </select>
                     </label>
+                    {selectedPet.status === 'dead' && (
+                      <label>
+                        Death date
+                        <input type="date" value={selectedPet.deathDate} onChange={(event) => updatePet({ deathDate: event.target.value })} />
+                      </label>
+                    )}
                     <label>
                       Human owner
                       <select value={selectedPet.ownerPersonId} onChange={(event) => updatePet({ ownerPersonId: event.target.value })}>
@@ -817,17 +858,13 @@ export function Dashboard(props: DashboardProps) {
           <section className="dashboard-modal celestial-panel" role="dialog" aria-modal="true" aria-labelledby="child-unit-title" onMouseDown={(event) => event.stopPropagation()}>
             <p className="section-kicker">Choose the parents</p>
             <h2 id="child-unit-title">Which branch does this child belong to?</h2>
-            <p>Select the other parent for {selectedPerson.displayName}, or keep this as a single-parent branch.</p>
+            <p>Select the other parent for {selectedPerson.displayName}.</p>
             <div className="choice-grid">
-              {data.families.filter((family) => family.parentIds.includes(selectedPerson.id)).map((family) => {
-                const partners = family.parentIds.filter((id) => id !== selectedPerson.id).map((id) => data.people.find((person) => person.id === id)?.displayName ?? id)
-                return (
-                  <button className="secondary-button" type="button" key={family.id} onClick={() => completeAddPersonChild(family.id)}>
-                    {partners.length ? partners.join(' & ') : 'Existing single-parent branch'}
-                  </button>
-                )
-              })}
-              <button className="secondary-button" type="button" onClick={() => completeAddPersonChild('single')}>Single parent</button>
+              {childPartnerChoices.map(({ family, label }) => (
+                <button className="secondary-button" type="button" key={family.id} onClick={() => completeAddPersonChild(family.id)}>
+                  {label}
+                </button>
+              ))}
             </div>
             <button className="ghost-button modal-cancel" type="button" onClick={() => setShowChildChooser(false)}>Cancel</button>
           </section>

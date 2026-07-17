@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import seed from '../../public/tree-data.json'
+import publishedArchive from '../../public/tree-data.json'
+import seed from '../test/fixtures/tree-data-v4.json'
 import type { TreeData } from '../types'
 import {
   addChild,
@@ -30,6 +31,7 @@ function legacyVersion(version: 1 | 2) {
   legacy.version = version
   const people = legacy.people as Array<Record<string, unknown>>
   people.forEach((person) => {
+    delete person.deathDate
     person.link = person.id === 'father' ? 'https://example.com/father' : ''
     delete person.links
     person.portrait = ''
@@ -41,6 +43,7 @@ function legacyVersion(version: 1 | 2) {
   })
   const pets = legacy.pets as Array<Record<string, unknown>>
   pets.forEach((pet) => {
+    delete pet.deathDate
     pet.link = 'https://example.com/iring'
     pet.portrait = ''
     delete pet.links
@@ -50,10 +53,15 @@ function legacyVersion(version: 1 | 2) {
 }
 
 describe('age, ordering, and migration', () => {
-  it('calculates age from a full date before using an override', () => {
+  it('calculates living ages, ages at death, and year-only pet ages', () => {
     const today = new Date('2026-07-17T12:00:00Z')
     expect(calculateAge('2000-07-17', 88, today)).toBe(26)
     expect(calculateAge('2000-07-18', 88, today)).toBe(25)
+    expect(calculateAge('2000-07-18', 88, today, '2020-07-17', 'dead')).toBe(19)
+    expect(calculateAge('2000-07-18', null, today, '', 'dead')).toBe('?')
+    expect(calculateAge('2013', 11, today, '', 'dead', true)).toBe(11)
+    expect(calculateAge('2013', null, today, '2024-06-01', 'dead', true)).toBe(11)
+    expect(calculateAge('2013', null, today, '', 'alive', true)).toBe(13)
     expect(calculateAge('', 42, today)).toBe(42)
     expect(calculateAge('', null, today)).toBe('?')
   })
@@ -65,13 +73,14 @@ describe('age, ordering, and migration', () => {
     ])
   })
 
-  it.each([1, 2] as const)('migrates version %s data to version 3 with links and automatic PNG paths', (version) => {
+  it.each([1, 2] as const)('migrates version %s data to version 4 with links, death dates, and automatic PNG paths', (version) => {
     const migrated = migrateTreeData(legacyVersion(version))
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
     expect(migrated.people.find((person) => person.id === 'father')).toEqual(expect.objectContaining({
       portraitNumber: 1,
       portrait: 'portraits/1.png',
       links: ['https://example.com/father'],
+      deathDate: '',
     }))
     expect(migrated.people.find((person) => person.id === 'child-7')?.portraitNumber).toBe(3)
     expect(migrated.people.find((person) => person.id === 'new-child')?.portraitNumber).toBe(22)
@@ -81,11 +90,24 @@ describe('age, ordering, and migration', () => {
       portrait: 'portraits/pets/1.png',
       links: ['https://example.com/iring'],
       protected: true,
+      deathDate: '',
     }))
     expect(validateTreeData(migrated)).toEqual({ valid: true, errors: [] })
   })
 
-  it('migrates current version-3 data idempotently', () => {
+  it('migrates version-3 data with blank death dates and keeps version 4 idempotent', () => {
+    const previous = structuredClone(seed) as unknown as Record<string, unknown>
+    previous.version = 3
+    ;(previous.people as Array<Record<string, unknown>>).forEach((person) => delete person.deathDate)
+    ;(previous.pets as Array<Record<string, unknown>>).forEach((pet) => {
+      delete pet.deathDate
+      if (pet.id === 'iring-brown') pet.birthDate = ''
+    })
+    const migrated = migrateTreeData(previous)
+    expect(migrated.version).toBe(4)
+    expect(migrated.people.every((person) => person.deathDate === '')).toBe(true)
+    expect(migrated.pets.every((pet) => pet.deathDate === '')).toBe(true)
+    expect(migrated.pets.find((pet) => pet.id === 'iring-brown')?.birthDate).toBe('2013')
     expect(migrateTreeData(fresh())).toEqual(fresh())
   })
 })
@@ -93,7 +115,7 @@ describe('age, ordering, and migration', () => {
 describe('preserved archive data', () => {
   it('keeps all family edits, core protections, numbered portraits, and the pet founder', () => {
     const data = fresh()
-    expect(data.version).toBe(3)
+    expect(data.version).toBe(4)
     expect(data.people).toHaveLength(24)
     expect(data.people.filter((person) => person.protected)).toHaveLength(9)
     expect(new Set(data.people.map((person) => person.portraitNumber)).size).toBe(24)
@@ -104,10 +126,32 @@ describe('preserved archive data', () => {
     )).toEqual([4, 2, 2, 2, 2, 0, 0])
     expect(data.pets).toContainEqual(expect.objectContaining({
       id: 'iring-brown', displayName: 'Iring Brown', species: 'Cat', gender: 'female', status: 'dead',
-      ageOverride: 11, birthDetails: 'Trash can', personality: 'Slow', protected: true,
+      birthDate: '2013', deathDate: '', ageOverride: 11, birthDetails: 'Trash can', personality: 'Slow', protected: true,
       portraitNumber: 1, portrait: 'portraits/pets/1.png', links: [],
     }))
     expect(countDescendants(data)).toBe(21)
+    expect(validateTreeData(data)).toEqual({ valid: true, errors: [] })
+  })
+})
+
+describe('published archive data', () => {
+  it('keeps the renamed records and validates the current public version-4 archive', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    expect(data.version).toBe(4)
+    expect(data.people).toHaveLength(26)
+    expect(data.pets).toHaveLength(3)
+    expect(data.families).toHaveLength(9)
+    expect(data.petFamilies).toHaveLength(1)
+    expect(data.people.slice(0, 3).map((person) => person.displayName)).toEqual([
+      'Nemisio Sullano',
+      'Presentasion Sullano',
+      'Jeffrey Sullano',
+    ])
+    expect(data.pets.find((pet) => pet.id === 'iring-brown')).toEqual(expect.objectContaining({
+      displayName: 'Iring Brown',
+      birthDate: '2013',
+      portraitNumber: 1,
+    }))
     expect(validateTreeData(data)).toEqual({ valid: true, errors: [] })
   })
 })
@@ -137,6 +181,24 @@ describe('portrait and graph validation', () => {
     expect(errors).toMatch(/duplicate birth orders/)
     expect(errors).toMatch(/unsafe link/)
     expect(errors).toMatch(/future/)
+  })
+
+  it('accepts pet birth years and rejects invalid life-date combinations', () => {
+    const data = fresh()
+    data.pets[0].birthDate = '2013'
+    expect(validateTreeData(data)).toEqual({ valid: true, errors: [] })
+    data.people[0].birthDate = '2000'
+    data.people[1].birthDate = '2001-01-01'
+    data.people[1].deathDate = '2000-01-01'
+    data.people[2].status = 'dead'
+    data.people[2].deathDate = '2999-01-01'
+    data.pets[0].status = 'alive'
+    data.pets[0].deathDate = '2024-01-01'
+    const errors = validateTreeData(data).errors.join(' ')
+    expect(errors).toMatch(/Father has an invalid birth date/)
+    expect(errors).toMatch(/Mother has a death date before the birth date/)
+    expect(errors).toMatch(/Child 1 has a death date in the future/)
+    expect(errors).toMatch(/Iring Brown cannot have a death date while marked alive|marked alive/)
   })
 
   it('detects human and pet ancestry cycles', () => {
@@ -216,7 +278,7 @@ describe('editing operations', () => {
     expect(planPersonDeletion(data, ['temporary-parent']).blockedReason).toMatch(/protected record Father/)
   })
 
-  it('supports pet ownership, lineage, protections, and version-3 multi-link export round trips', () => {
+  it('supports pet ownership, lineage, protections, and version-4 multi-link export round trips', () => {
     const data = fresh()
     const pet = { ...createBlankPet('luna', 'Luna', 2), species: 'Dog', ownerPersonId: 'child-2', links: ['https://example.com/luna', 'https://example.com/video'] }
     const withPet = { ...data, pets: [...data.pets, pet] }

@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import seed from '../public/tree-data.json'
+import seed from './test/fixtures/tree-data-v4.json'
 import App from './App'
 
 const DRAFT_KEY = 'celestial-family-archive-draft-v1'
@@ -40,7 +40,8 @@ describe('App draft recovery', () => {
     expect(await screen.findByRole('heading', { name: 'The Family Archive' })).toBeInTheDocument()
     expect(screen.getByText('Local draft active')).toBeInTheDocument()
     const stored = JSON.parse(localStorage.getItem(DRAFT_KEY)!)
-    expect(stored.version).toBe(3)
+    expect(stored.version).toBe(4)
+    expect(stored.people[0].deathDate).toBe('')
     expect(stored.people[0].links).toEqual(['https://example.com/father'])
     expect(stored.pets[0]).toEqual(expect.objectContaining({
       portraitNumber: 1,
@@ -49,7 +50,7 @@ describe('App draft recovery', () => {
     }))
   })
 
-  it('discards an invalid draft and uses published version-3 data', async () => {
+  it('discards an invalid draft and uses published version-4 data', async () => {
     mockPublishedData()
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 99 }))
     render(<App />)
