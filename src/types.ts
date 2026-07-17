@@ -22,7 +22,7 @@ export interface Person {
   relationshipLabel: string
   portrait: string
   portraitNumber: number
-  link: string
+  links: string[]
   status: LifeStatus
   protected: boolean
   createdAt: string
@@ -52,7 +52,8 @@ export interface Pet {
   biography: string
   relationshipLabel: string
   portrait: string
-  link: string
+  portraitNumber: number
+  links: string[]
   status: LifeStatus
   ownerPersonId: string
   protected: boolean

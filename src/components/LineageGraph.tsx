@@ -14,7 +14,6 @@ import {
   displayValue,
   isSafeExternalUrl,
   portraitCandidates,
-  resolvePortrait,
   sortChildren,
 } from '../lib/data'
 import type { FamilyUnit, Person, Pet, PetFamilyUnit } from '../types'
@@ -70,7 +69,7 @@ function PortraitFallback({ entity }: { entity: Entity }) {
 
 function EntityPortrait({ entity }: { entity: Entity }) {
   const candidates = useMemo(
-    () => isPet(entity) ? (entity.portrait ? [resolvePortrait(entity.portrait)] : []) : portraitCandidates(entity),
+    () => portraitCandidates(entity),
     [entity],
   )
   const [candidateIndex, setCandidateIndex] = useState(0)
@@ -99,19 +98,20 @@ function EntityCard({
   onLeave: () => void
   onTouch: (entity: Entity) => void
 }) {
-  const openLink = () => {
-    if (entity.link && isSafeExternalUrl(entity.link)) window.open(entity.link, '_blank', 'noopener,noreferrer')
+  const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
+  const openLink = (link: string) => {
+    window.open(link, '_blank', 'noopener,noreferrer')
   }
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.pointerType === 'touch' || event.pointerType === 'pen') onTouch(entity)
-    else openLink()
+    if (event.pointerType === 'touch' || event.pointerType === 'pen' || safeLinks.length !== 1) onTouch(entity)
+    else openLink(safeLinks[0])
   }
   return (
     <button
       className={`entity-card ${isPet(entity) ? 'pet-card' : ''}`}
       type="button"
       data-entity-id={entity.id}
-      aria-label={`${displayValue(entity.displayName)} details${entity.link ? ', opens story link' : ''}`}
+      aria-label={`${displayValue(entity.displayName)} details${safeLinks.length === 1 ? ', opens story link' : safeLinks.length > 1 ? `, ${safeLinks.length} story links available` : ''}`}
       onPointerEnter={(event) => onHover(entity, event.clientX, event.clientY)}
       onPointerMove={(event) => {
         if (event.pointerType === 'mouse') onHover(entity, event.clientX, event.clientY)
@@ -119,14 +119,15 @@ function EntityCard({
       onPointerLeave={onLeave}
       onPointerUp={handlePointerUp}
       onKeyDown={(event) => {
-        if ((event.key === 'Enter' || event.key === ' ') && entity.link) {
+        if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          openLink()
+          if (safeLinks.length === 1) openLink(safeLinks[0])
+          else onTouch(entity)
         }
       }}
     >
       <span className="portrait-ring">
-        <EntityPortrait key={isPet(entity) ? entity.portrait : `${entity.portrait}:${entity.portraitNumber}`} entity={entity} />
+        <EntityPortrait key={`${entity.portrait}:${entity.portraitNumber}`} entity={entity} />
       </span>
       <span className="entity-name">{displayValue(entity.displayName)}</span>
       <span className="entity-role">
@@ -143,6 +144,7 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
   const left = Math.min(window.innerWidth - 254, Math.max(16, tooltip.x + 18))
   const top = Math.min(window.innerHeight - 300, Math.max(82, tooltip.y + 18))
   const style = pinned ? undefined : ({ left, top } as CSSProperties)
+  const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
   const rows = isPet(entity)
     ? [
         ['Species', displayValue(entity.species)],
@@ -165,7 +167,7 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
   return (
     <aside className={`detail-popover ${pinned ? 'detail-pinned' : ''}`} style={style} role="dialog" aria-label={`${entity.displayName} details`}>
       {pinned && <button className="popover-close" type="button" onClick={onClose} aria-label="Close details">×</button>}
-      {!isPet(entity) && <span className="portrait-number" aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>}
+      <span className="portrait-number" aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>
       <span className="popover-kicker">{displayValue(entity.relationshipLabel)}</span>
       <h3>{displayValue(entity.displayName)}</h3>
       {!isPet(entity) && entity.nickname && <p className="nickname">“{entity.nickname}”</p>}
@@ -175,8 +177,12 @@ function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; pe
         ))}
       </dl>
       {entity.biography && <p className="popover-bio">{entity.biography}</p>}
-      {pinned && entity.link && isSafeExternalUrl(entity.link) && (
-        <a className="story-link" href={entity.link} target="_blank" rel="noreferrer">Open story ↗</a>
+      {pinned && safeLinks.length > 0 && (
+        <div className="story-links" aria-label="Profile links">
+          {safeLinks.map((link, index) => (
+            <a className="story-link" href={link} target="_blank" rel="noreferrer" key={`${link}-${index}`}>Visit {index + 1} ↗</a>
+          ))}
+        </div>
       )}
     </aside>
   )

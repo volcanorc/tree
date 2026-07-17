@@ -11,9 +11,14 @@ import {
   exportTreeData,
   getBirthOrder,
   getPetBirthOrder,
+  isAutomaticPortraitPath,
   makeId,
   isSafeExternalUrl,
+  isSafePortrait,
   migrateTreeData,
+  nextPetPortraitNumber,
+  personPortraitPath,
+  petPortraitPath,
   planPersonDeletion,
   updateBirthOrder,
   updatePetBirthOrder,
@@ -48,8 +53,7 @@ const textFields: Array<{
   { key: 'relationshipLabel', label: 'Relationship label', placeholder: 'e.g. Eldest son' },
   { key: 'personality', label: 'Personality', placeholder: 'A few defining qualities' },
   { key: 'biography', label: 'Short biography', placeholder: 'A public, concise life note', textarea: true },
-  { key: 'portrait', label: 'Portrait path or HTTPS URL', placeholder: '/portraits/name.webp' },
-  { key: 'link', label: 'Video or profile link', placeholder: 'https://…' },
+  { key: 'portrait', label: 'Portrait path or HTTPS PNG URL', placeholder: 'portraits/1.png' },
 ]
 
 const petTextFields: Array<{
@@ -66,9 +70,60 @@ const petTextFields: Array<{
   { key: 'ageOverride', label: 'Age override', placeholder: 'Used only when birth date is empty' },
   { key: 'personality', label: 'Personality', placeholder: 'Temperament and favorite things' },
   { key: 'biography', label: 'Short biography', placeholder: 'A short public story', textarea: true },
-  { key: 'portrait', label: 'Portrait path or HTTPS URL', placeholder: '/portraits/pet.webp' },
-  { key: 'link', label: 'Video or profile link', placeholder: 'https://…' },
+  { key: 'portrait', label: 'Portrait path or HTTPS PNG URL', placeholder: 'portraits/pets/1.png' },
 ]
+
+function LinkEditor({ links, onChange }: { links: string[]; onChange: (links: string[]) => void }) {
+  const rows = links.length > 0 ? links : ['']
+  const updateLink = (index: number, value: string) => {
+    const next = [...rows]
+    next[index] = value
+    onChange(next)
+  }
+
+  return (
+    <fieldset className="link-editor full-width">
+      <legend>
+        <span>Video or profile links</span>
+        <button
+          className="mini-button link-add-button"
+          type="button"
+          onClick={() => onChange([...rows, ''])}
+          aria-label="Add another profile link"
+        >
+          +
+        </button>
+      </legend>
+      <div className="link-rows">
+        {rows.map((link, index) => (
+          <div className="link-row" key={index}>
+            <label>
+              <span className="visually-hidden">Profile link {index + 1}</span>
+              <input
+                value={link}
+                placeholder="https://…"
+                type="url"
+                onChange={(event) => updateLink(index, event.target.value)}
+                aria-invalid={Boolean(link && !isSafeExternalUrl(link))}
+              />
+              {link && !isSafeExternalUrl(link) && <small className="field-warning">Use an HTTP or HTTPS link.</small>}
+            </label>
+            {index > 0 && (
+              <button
+                className="mini-button link-remove-button"
+                type="button"
+                onClick={() => onChange(rows.filter((_, rowIndex) => rowIndex !== index))}
+                aria-label={`Remove profile link ${index + 1}`}
+              >
+                −
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
 
 function DashboardLogin({ data, onAuthenticated }: Pick<DashboardProps, 'data' | 'onAuthenticated'>) {
   const [username, setUsername] = useState('admin')
@@ -151,6 +206,20 @@ export function Dashboard(props: DashboardProps) {
   const selectedPet = data.pets.find((pet) => pet.id === selectedPetId) ?? data.pets[0]
   const selectedBirthOrder = selectedPerson ? getBirthOrder(data, selectedPerson.id) : null
   const selectedPetBirthOrder = selectedPet ? getPetBirthOrder(data, selectedPet.id) : null
+  const personPortraitNumberError = selectedPerson
+    ? !Number.isInteger(selectedPerson.portraitNumber) || selectedPerson.portraitNumber < 1
+      ? 'Use a positive whole number.'
+      : data.people.some((person) => person.id !== selectedPerson.id && person.portraitNumber === selectedPerson.portraitNumber)
+        ? `Portrait ${selectedPerson.portraitNumber} is already assigned to another person.`
+        : ''
+    : ''
+  const petPortraitNumberError = selectedPet
+    ? !Number.isInteger(selectedPet.portraitNumber) || selectedPet.portraitNumber < 1
+      ? 'Use a positive whole number.'
+      : data.pets.some((pet) => pet.id !== selectedPet.id && pet.portraitNumber === selectedPet.portraitNumber)
+        ? `Pet portrait ${selectedPet.portraitNumber} is already assigned to another pet.`
+        : ''
+    : ''
 
   function updateSite(field: 'title' | 'subtitle', value: string) {
     onChange({ ...data, site: { ...data.site, [field]: value } })
@@ -169,6 +238,26 @@ export function Dashboard(props: DashboardProps) {
     onChange({
       ...data,
       pets: data.pets.map((pet) => (pet.id === selectedPet.id ? { ...pet, ...patch } : pet)),
+    })
+  }
+
+  function updatePersonPortraitNumber(portraitNumber: number) {
+    if (!selectedPerson) return
+    const syncPath = !selectedPerson.portrait.trim()
+      || isAutomaticPortraitPath(selectedPerson.portrait, 'person', selectedPerson.portraitNumber)
+    updatePerson({
+      portraitNumber,
+      portrait: syncPath ? personPortraitPath(portraitNumber) : selectedPerson.portrait,
+    })
+  }
+
+  function updatePetPortraitNumber(portraitNumber: number) {
+    if (!selectedPet) return
+    const syncPath = !selectedPet.portrait.trim()
+      || isAutomaticPortraitPath(selectedPet.portrait, 'pet', selectedPet.portraitNumber)
+    updatePet({
+      portraitNumber,
+      portrait: syncPath ? petPortraitPath(portraitNumber) : selectedPet.portrait,
     })
   }
 
@@ -255,7 +344,7 @@ export function Dashboard(props: DashboardProps) {
   }
 
   function addNewPet() {
-    const pet = createBlankPet(nextPetId(data), 'New pet')
+    const pet = createBlankPet(nextPetId(data), 'New pet', nextPetPortraitNumber(data))
     onChange({ ...data, pets: [...data.pets, pet] })
     setSelectedPetId(pet.id)
     setStatus('New pet added. Add lineage only if you know its pet parent.')
@@ -357,9 +446,9 @@ export function Dashboard(props: DashboardProps) {
     <main className="dashboard reveal" id="dashboard-main">
       <section className="dashboard-heading">
         <div>
-          <p className="eyebrow">Authenticated local editor</p>
+          <p className="eyebrow">Every detail preserved.</p>
           <h1>Archive dashboard</h1>
-          <p>Edit locally, validate, then download the complete replacement data file.</p>
+          <p>Modify the current family history.</p>
         </div>
         <button className="ghost-button" onClick={onLogout}>Log out</button>
       </section>
@@ -506,11 +595,12 @@ export function Dashboard(props: DashboardProps) {
                             } as Partial<Person>)}
                           />
                         )}
-                        {field.key === 'link' && selectedPerson.link && !isSafeExternalUrl(selectedPerson.link) && (
-                          <small className="field-warning">Use an HTTP or HTTPS link.</small>
+                        {field.key === 'portrait' && !isSafePortrait(selectedPerson.portrait) && (
+                          <small className="field-warning">Use a repository PNG path or HTTPS PNG URL.</small>
                         )}
                       </label>
                     ))}
+                    <LinkEditor links={selectedPerson.links} onChange={(links) => updatePerson({ links })} />
                     <label>
                       Gender
                       <select value={selectedPerson.gender} onChange={(event) => updatePerson({ gender: event.target.value as Person['gender'] })}>
@@ -530,8 +620,16 @@ export function Dashboard(props: DashboardProps) {
                     </label>
                     <label>
                       Portrait number
-                      <input value={selectedPerson.portraitNumber} readOnly aria-readonly="true" />
-                      <small>Use portraits/{selectedPerson.portraitNumber}.png (then .jpg, .jpeg, or .webp).</small>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={selectedPerson.portraitNumber}
+                        aria-invalid={Boolean(personPortraitNumberError)}
+                        onChange={(event) => updatePersonPortraitNumber(Number(event.target.value))}
+                      />
+                      <small>Automatic path: portraits/{selectedPerson.portraitNumber}.png</small>
+                      {personPortraitNumberError && <small className="field-warning" role="alert">{personPortraitNumberError}</small>}
                     </label>
                     {selectedBirthOrder !== null && (
                       <label>
@@ -561,25 +659,27 @@ export function Dashboard(props: DashboardProps) {
               <aside className="record-list" aria-label="Pets">
                 <div className="record-list-title">
                   <span>Pets</span>
-                  <button className="mini-button" onClick={addNewPet}>Add</button>
+                  <div className="record-list-title-actions">
+                    <small>{data.pets.length}</small>
+                    <button className="mini-button" onClick={addNewPet}>Add</button>
+                  </div>
                 </div>
                 {data.pets.length === 0 && <p className="record-list-empty">No pets published yet.</p>}
                 {data.pets.map((pet) => (
-                  <button
-                    key={pet.id}
-                    className={selectedPet?.id === pet.id ? 'active' : ''}
-                    onClick={() => setSelectedPetId(pet.id)}
-                  >
-                    <span>{pet.displayName}</span>
-                    <small>{pet.species || '?'}</small>
-                  </button>
+                  <div className={`record-row ${selectedPet?.id === pet.id ? 'active' : ''}`} key={pet.id}>
+                    <button type="button" onClick={() => setSelectedPetId(pet.id)}>
+                      <span>{pet.displayName}</span>
+                      <small>{pet.protected ? `${pet.species || '?'} · locked` : pet.species || '?'}</small>
+                    </button>
+                  </div>
                 ))}
               </aside>
               {selectedPet ? (
                 <div className="record-form">
                   <header className="record-form-header">
                     <div>
-                      <p className="section-kicker">Stable ID · {selectedPet.id}</p>
+                      <p className="section-kicker">Editing: {selectedPet.displayName}</p>
+                      <p className="stable-id">Stable ID · {selectedPet.id}</p>
                       <h2>{selectedPet.displayName}</h2>
                     </div>
                     {selectedPet.protected && <span className="protected-badge">Protected</span>}
@@ -607,8 +707,12 @@ export function Dashboard(props: DashboardProps) {
                             } as Partial<Pet>)}
                           />
                         )}
+                        {field.key === 'portrait' && !isSafePortrait(selectedPet.portrait) && (
+                          <small className="field-warning">Use a repository PNG path or HTTPS PNG URL.</small>
+                        )}
                       </label>
                     ))}
+                    <LinkEditor links={selectedPet.links} onChange={(links) => updatePet({ links })} />
                     <label>
                       Gender
                       <select value={selectedPet.gender} onChange={(event) => updatePet({ gender: event.target.value as Pet['gender'] })}>
@@ -632,6 +736,19 @@ export function Dashboard(props: DashboardProps) {
                         <option value="">None / unknown</option>
                         {data.people.map((person) => <option key={person.id} value={person.id}>{person.displayName}</option>)}
                       </select>
+                    </label>
+                    <label>
+                      Portrait number
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={selectedPet.portraitNumber}
+                        aria-invalid={Boolean(petPortraitNumberError)}
+                        onChange={(event) => updatePetPortraitNumber(Number(event.target.value))}
+                      />
+                      <small>Automatic path: portraits/pets/{selectedPet.portraitNumber}.png</small>
+                      {petPortraitNumberError && <small className="field-warning" role="alert">{petPortraitNumberError}</small>}
                     </label>
                     {selectedPetBirthOrder !== null && (
                       <label>

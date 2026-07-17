@@ -175,6 +175,7 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .detail-pinned { inset: auto 12px 12px 12px; width: auto; max-height: 62vh; pointer-events: auto; }
 .popover-close { position: absolute; right: 9px; top: 8px; border: 0; background: transparent; color: #a9b3c1; font-size: 1.2rem; cursor: pointer; }
 .story-link { display: inline-flex; margin-top: 10px; padding: 8px 11px; border: 1px solid rgba(200,131,85,.4); color: var(--copper-light); text-decoration: none; font-size: .7rem; }
+.story-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .empty-lineage { height: 590px; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
 .empty-lineage h2 { margin: 15px 0 5px; font-size: 2rem; }
 .empty-lineage p { max-width: 380px; color: #7f8c9d; line-height: 1.6; }
@@ -196,7 +197,9 @@ label { display: flex; flex-direction: column; gap: 7px; color: #8996a8; font-si
 input, select, textarea { width: 100%; border: 1px solid rgba(167,185,210,.19); border-radius: 2px; background: rgba(2,6,11,.58); color: #e4e8ed; padding: 11px 12px; outline: none; letter-spacing: normal; text-transform: none; }
 textarea { min-height: 95px; resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { border-color: rgba(200,131,85,.72); box-shadow: 0 0 0 3px rgba(200,131,85,.09); }
+input[aria-invalid="true"] { border-color: rgba(225,112,92,.72); box-shadow: 0 0 0 3px rgba(204,78,58,.08); }
 .form-error, .field-warning { color: #f3a18f; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 .primary-button, .secondary-button, .ghost-button, .danger-button, .mini-button { min-height: 40px; border: 1px solid transparent; border-radius: 2px; padding: 9px 15px; cursor: pointer; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
 .primary-button { background: var(--copper); color: #160c07; font-weight: 600; }
 .primary-button:hover { background: var(--copper-light); }
@@ -245,6 +248,7 @@ code { color: #d4b093; font-size: .83em; }
 .record-list { overflow-y: auto; max-height: 760px; border-right: 1px solid var(--line); background: rgba(2,5,9,.28); }
 .record-list-title { height: 57px; display: flex; justify-content: space-between; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--line); color: #afb7c3; font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; }
 .record-list-title small { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid rgba(160,180,205,.2); border-radius: 50%; }
+.record-list-title-actions { display: flex; align-items: center; gap: 8px; }
 .bulk-toggle { flex-direction: row; align-items: center; gap: 8px; color: inherit; cursor: pointer; }
 .bulk-toggle input, .record-row > input { width: 15px; height: 15px; accent-color: var(--copper); }
 .bulk-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid rgba(160,180,205,.1); color: #8491a3; font-size: .65rem; }
@@ -265,6 +269,12 @@ code { color: #d4b093; font-size: .83em; }
 .protected-badge { padding: 6px 8px; border: 1px solid rgba(200,131,85,.3); color: var(--copper-light); font-size: .58rem; letter-spacing: .09em; text-transform: uppercase; }
 .record-actions { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 label small { color: #687487; line-height: 1.4; text-transform: none; letter-spacing: normal; }
+.link-editor { min-width: 0; margin: 0; padding: 0; border: 0; }
+.link-editor legend { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; color: #8996a8; font-size: .67rem; letter-spacing: .08em; text-transform: uppercase; }
+.link-add-button, .link-remove-button { min-width: 30px; min-height: 30px; padding: 3px 8px; font-size: 1rem; line-height: 1; }
+.link-rows { display: grid; gap: 9px; }
+.link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.link-row label { min-width: 0; }
 .empty-editor { display: grid; align-content: center; justify-items: start; padding: clamp(30px, 7vw, 80px); }
 .empty-editor h2 { margin: 0; font-size: 2.6rem; }
 .empty-editor > p:not(.eyebrow) { color: #8995a6; }

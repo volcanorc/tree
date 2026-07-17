@@ -65,10 +65,12 @@ export function isSafeExternalUrl(value: string): boolean {
 }
 
 export function isSafePortrait(value: string): boolean {
-  if (!value.trim()) return true
-  if (!value.includes('://')) return !value.trim().startsWith('javascript:')
+  if (!value.trim()) return false
+  const trimmed = value.trim()
   try {
-    return new URL(value).protocol === 'https:'
+    const parsed = new URL(trimmed, 'https://archive.local')
+    const isRelative = parsed.origin === 'https://archive.local' && !trimmed.includes('://')
+    return (isRelative || parsed.protocol === 'https:') && parsed.pathname.toLowerCase().endsWith('.png')
   } catch {
     return false
   }
@@ -80,11 +82,21 @@ export function resolvePortrait(value: string): string {
   return `${import.meta.env.BASE_URL}${value.replace(/^\//, '')}`
 }
 
-export function portraitCandidates(person: Person): string[] {
-  if (person.portrait.trim()) return [resolvePortrait(person.portrait)]
-  return ['png', 'jpg', 'jpeg', 'webp'].map(
-    (extension) => `${import.meta.env.BASE_URL}portraits/${person.portraitNumber}.${extension}`,
-  )
+export function personPortraitPath(portraitNumber: number): string {
+  return `portraits/${portraitNumber}.png`
+}
+
+export function petPortraitPath(portraitNumber: number): string {
+  return `portraits/pets/${portraitNumber}.png`
+}
+
+export function isAutomaticPortraitPath(value: string, kind: 'person' | 'pet', portraitNumber: number): boolean {
+  const expected = kind === 'person' ? personPortraitPath(portraitNumber) : petPortraitPath(portraitNumber)
+  return value.replace(/^\//, '') === expected
+}
+
+export function portraitCandidates(entity: Pick<Person | Pet, 'portrait' | 'portraitNumber'>): string[] {
+  return entity.portrait.trim() ? [resolvePortrait(entity.portrait)] : []
 }
 
 export function bornValue(entity: Pick<Person | Pet, 'birthDate' | 'birthDetails'>): string {
@@ -173,8 +185,9 @@ function iringBrown(): Pet {
     personality: 'Slow',
     biography: '',
     relationshipLabel: 'Pet founder',
-    portrait: '',
-    link: '',
+    portrait: petPortraitPath(1),
+    portraitNumber: 1,
+    links: [],
     status: 'dead',
     ownerPersonId: '',
     protected: true,
@@ -184,12 +197,16 @@ function iringBrown(): Pet {
 
 export function migrateTreeData(input: unknown): TreeData {
   if (!input || typeof input !== 'object') throw new Error('The archive data is not an object.')
-  const raw = input as Partial<TreeData> & { people?: Array<Partial<Person>>; pets?: Array<Partial<Pet>> }
-  if (raw.version !== 1 && raw.version !== 2) throw new Error('Unsupported or missing data version.')
+  type LegacyRecord = { link?: unknown; links?: unknown }
+  const raw = input as Partial<TreeData> & {
+    people?: Array<Partial<Person> & LegacyRecord>
+    pets?: Array<Partial<Pet> & LegacyRecord>
+  }
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) throw new Error('Unsupported or missing data version.')
   const rawPeople = Array.isArray(raw.people) ? raw.people : []
-  const isVersionTwo = raw.version === 2
+  const hasVersionTwoFields = raw.version === 2 || raw.version === 3
   const occupied = new Set<number>()
-  if (isVersionTwo) {
+  if (hasVersionTwoFields) {
     rawPeople.forEach((person) => {
       if (Number.isInteger(person.portraitNumber) && Number(person.portraitNumber) > 0) occupied.add(Number(person.portraitNumber))
     })
@@ -205,10 +222,14 @@ export function migrateTreeData(input: unknown): TreeData {
   const people: Person[] = rawPeople.map((person) => {
     const fixed = FIXED_PORTRAIT_NUMBERS.get(stringValue(person.id))
     let portraitNumber = Number(person.portraitNumber)
-    if (!isVersionTwo) {
+    if (!hasVersionTwoFields) {
       portraitNumber = fixed ?? takeNextPortrait()
       occupied.add(portraitNumber)
     }
+    const portrait = stringValue(person.portrait) || personPortraitPath(portraitNumber)
+    const links = Array.isArray(person.links)
+      ? person.links.map(stringValue)
+      : stringValue(person.link) ? [stringValue(person.link)] : []
     return {
       id: stringValue(person.id),
       displayName: stringValue(person.displayName),
@@ -220,40 +241,66 @@ export function migrateTreeData(input: unknown): TreeData {
       personality: stringValue(person.personality),
       biography: stringValue(person.biography),
       relationshipLabel: stringValue(person.relationshipLabel),
-      portrait: stringValue(person.portrait),
+      portrait,
       portraitNumber,
-      link: stringValue(person.link),
-      status: isVersionTwo ? person.status as LifeStatus : lifeStatus(person.status),
+      links,
+      status: hasVersionTwoFields ? person.status as LifeStatus : lifeStatus(person.status),
       protected: Boolean(person.protected),
       createdAt: stringValue(person.createdAt),
     }
   })
-  const pets: Pet[] = (Array.isArray(raw.pets) ? raw.pets : []).map((pet) => ({
-    id: stringValue(pet.id),
-    displayName: stringValue(pet.displayName),
-    species: stringValue(pet.species),
-    breed: stringValue(pet.breed),
-    gender: (pet.gender ?? 'unknown') as Gender,
-    birthDate: stringValue(pet.birthDate),
-    birthDetails: stringValue(pet.birthDetails),
-    ageOverride: numberOrNull(pet.ageOverride),
-    personality: stringValue(pet.personality),
-    biography: stringValue(pet.biography),
-    relationshipLabel: stringValue(pet.relationshipLabel),
-    portrait: stringValue(pet.portrait),
-    link: stringValue(pet.link),
-    status: isVersionTwo ? pet.status as LifeStatus : lifeStatus(pet.status),
-    ownerPersonId: stringValue(pet.ownerPersonId),
-    protected: Boolean(pet.protected),
-    createdAt: stringValue(pet.createdAt),
-  }))
+  const rawPets = Array.isArray(raw.pets) ? raw.pets : []
+  const occupiedPetPortraits = new Set<number>()
+  if (raw.version === 3) {
+    rawPets.forEach((pet) => {
+      if (Number.isInteger(pet.portraitNumber) && Number(pet.portraitNumber) > 0) occupiedPetPortraits.add(Number(pet.portraitNumber))
+    })
+  } else {
+    occupiedPetPortraits.add(1)
+  }
+  let nextPetPortrait = 1
+  const takeNextPetPortrait = () => {
+    while (occupiedPetPortraits.has(nextPetPortrait)) nextPetPortrait += 1
+    const number = nextPetPortrait
+    occupiedPetPortraits.add(number)
+    nextPetPortrait += 1
+    return number
+  }
+  const pets: Pet[] = rawPets.map((pet) => {
+    const portraitNumber = raw.version === 3
+      ? Number(pet.portraitNumber)
+      : stringValue(pet.id) === 'iring-brown' ? 1 : takeNextPetPortrait()
+    const links = Array.isArray(pet.links)
+      ? pet.links.map(stringValue)
+      : stringValue(pet.link) ? [stringValue(pet.link)] : []
+    return {
+      id: stringValue(pet.id),
+      displayName: stringValue(pet.displayName),
+      species: stringValue(pet.species),
+      breed: stringValue(pet.breed),
+      gender: (pet.gender ?? 'unknown') as Gender,
+      birthDate: stringValue(pet.birthDate),
+      birthDetails: stringValue(pet.birthDetails),
+      ageOverride: numberOrNull(pet.ageOverride),
+      personality: stringValue(pet.personality),
+      biography: stringValue(pet.biography),
+      relationshipLabel: stringValue(pet.relationshipLabel),
+      portrait: stringValue(pet.portrait) || petPortraitPath(portraitNumber),
+      portraitNumber,
+      links,
+      status: hasVersionTwoFields ? pet.status as LifeStatus : lifeStatus(pet.status),
+      ownerPersonId: stringValue(pet.ownerPersonId),
+      protected: Boolean(pet.protected),
+      createdAt: stringValue(pet.createdAt),
+    }
+  })
   const existingIring = pets.find((pet) => pet.id === 'iring-brown')
-  if (existingIring && !isVersionTwo) existingIring.protected = true
-  else if (!isVersionTwo) pets.unshift(iringBrown())
+  if (existingIring && raw.version !== 3) existingIring.protected = true
+  else if (!existingIring) pets.unshift(iringBrown())
   const site = raw.site ?? ({} as TreeData['site'])
   const subtitle = stringValue(site.subtitle)
   return {
-    version: 2,
+    version: 3,
     site: {
       title: stringValue(site.title),
       subtitle: !subtitle || subtitle === OLD_DEFAULT_SUBTITLE ? DEFAULT_SUBTITLE : subtitle,
@@ -282,7 +329,7 @@ export function migrateTreeData(input: unknown): TreeData {
 
 export function validateTreeData(data: TreeData): ValidationResult {
   const errors: string[] = []
-  if (!data || data.version !== 2) errors.push('Unsupported or missing data version.')
+  if (!data || data.version !== 3) errors.push('Unsupported or missing data version.')
   if (!data.site?.title?.trim()) errors.push('The site title is required.')
 
   const personIds = data.people.map((person) => person.id)
@@ -291,6 +338,9 @@ export function validateTreeData(data: TreeData): ValidationResult {
   duplicateValues(petIds).forEach((id) => errors.push(`Duplicate pet ID: ${id}.`))
   duplicateValues(data.people.map((person) => String(person.portraitNumber))).forEach((number) =>
     errors.push(`Duplicate portrait number: ${number}.`),
+  )
+  duplicateValues(data.pets.map((pet) => String(pet.portraitNumber))).forEach((number) =>
+    errors.push(`Duplicate pet portrait number: ${number}.`),
   )
   duplicateValues(data.families.map((family) => family.id)).forEach((id) => errors.push(`Duplicate family ID: ${id}.`))
   duplicateValues(data.petFamilies.map((family) => family.id)).forEach((id) => errors.push(`Duplicate pet-family ID: ${id}.`))
@@ -308,12 +358,16 @@ export function validateTreeData(data: TreeData): ValidationResult {
   const founderPet = data.pets.find((pet) => pet.id === 'iring-brown')
   if (!founderPet) errors.push('Protected pet founder iring-brown is missing.')
   else if (!founderPet.protected) errors.push('Protected pet founder iring-brown cannot be unprotected.')
+  else if (founderPet.portraitNumber !== 1) errors.push('Iring Brown must retain pet portrait number 1.')
   data.people.forEach((person) => {
     if (!person.id.trim()) errors.push('Every person requires an ID.')
     if (!Number.isInteger(person.portraitNumber) || person.portraitNumber < 1) errors.push(`${person.displayName || person.id} has an invalid portrait number.`)
     if (!LIFE_STATUSES.has(person.status)) errors.push(`${person.displayName || person.id} has an invalid status.`)
     validateDate(person.birthDate, person.displayName || person.id, errors)
-    if (!isSafeExternalUrl(person.link)) errors.push(`${person.displayName || person.id} has an unsafe link.`)
+    if (!Array.isArray(person.links)) errors.push(`${person.displayName || person.id} has an invalid links list.`)
+    else person.links.forEach((link, index) => {
+      if (!isSafeExternalUrl(link)) errors.push(`${person.displayName || person.id} has an unsafe link at position ${index + 1}.`)
+    })
     if (!isSafePortrait(person.portrait)) errors.push(`${person.displayName || person.id} has an unsafe portrait path.`)
   })
   data.families.forEach((family) => {
@@ -330,10 +384,14 @@ export function validateTreeData(data: TreeData): ValidationResult {
   if (hasCycle(data.families)) errors.push('The human family graph contains an ancestry cycle.')
 
   data.pets.forEach((pet) => {
+    if (!Number.isInteger(pet.portraitNumber) || pet.portraitNumber < 1) errors.push(`${pet.displayName || pet.id} has an invalid pet portrait number.`)
     if (!LIFE_STATUSES.has(pet.status)) errors.push(`${pet.displayName || pet.id} has an invalid status.`)
     validateDate(pet.birthDate, pet.displayName || pet.id, errors)
     if (pet.ownerPersonId && !people.has(pet.ownerPersonId)) errors.push(`${pet.displayName || pet.id} references a missing owner.`)
-    if (!isSafeExternalUrl(pet.link)) errors.push(`${pet.displayName || pet.id} has an unsafe link.`)
+    if (!Array.isArray(pet.links)) errors.push(`${pet.displayName || pet.id} has an invalid links list.`)
+    else pet.links.forEach((link, index) => {
+      if (!isSafeExternalUrl(link)) errors.push(`${pet.displayName || pet.id} has an unsafe link at position ${index + 1}.`)
+    })
     if (!isSafePortrait(pet.portrait)) errors.push(`${pet.displayName || pet.id} has an unsafe portrait path.`)
   })
   data.petFamilies.forEach((family) => {
@@ -383,6 +441,13 @@ export function nextPortraitNumber(data: TreeData): number {
   return candidate
 }
 
+export function nextPetPortraitNumber(data: TreeData): number {
+  const used = new Set(data.pets.map((pet) => pet.portraitNumber))
+  let candidate = 1
+  while (used.has(candidate)) candidate += 1
+  return candidate
+}
+
 export function createBlankPerson(id: string, label: string, portraitNumber = 1): Person {
   return {
     id,
@@ -395,16 +460,16 @@ export function createBlankPerson(id: string, label: string, portraitNumber = 1)
     personality: '',
     biography: '',
     relationshipLabel: 'Family member',
-    portrait: '',
+    portrait: personPortraitPath(portraitNumber),
     portraitNumber,
-    link: '',
+    links: [],
     status: 'alive',
     protected: false,
     createdAt: new Date().toISOString(),
   }
 }
 
-export function createBlankPet(id: string, label: string): Pet {
+export function createBlankPet(id: string, label: string, portraitNumber = 1): Pet {
   return {
     id,
     displayName: label,
@@ -417,8 +482,9 @@ export function createBlankPet(id: string, label: string): Pet {
     personality: '',
     biography: '',
     relationshipLabel: 'Pet',
-    portrait: '',
-    link: '',
+    portrait: petPortraitPath(portraitNumber),
+    portraitNumber,
+    links: [],
     status: 'alive',
     ownerPersonId: '',
     protected: false,
@@ -472,7 +538,7 @@ export function addPartner(data: TreeData, personId: string, label = 'New partne
 
 export function addPetOffspring(data: TreeData, parentPetId: string, label = 'New pet'): TreeData {
   const id = makeId(label, data.pets.map((pet) => pet.id))
-  const pet = createBlankPet(id, label)
+  const pet = createBlankPet(id, label, nextPetPortraitNumber(data))
   const familyIndex = data.petFamilies.findIndex((family) => family.parentPetIds.includes(parentPetId))
   const petFamilies = data.petFamilies.map((family) => ({ ...family, children: [...family.children] }))
   if (familyIndex >= 0) {
@@ -488,7 +554,7 @@ export function addPetPartner(data: TreeData, petId: string, label = 'New pet pa
   const current = data.petFamilies.find((family) => family.parentPetIds.includes(petId))
   if (current?.parentPetIds.length === 2) return data
   const id = makeId(label, data.pets.map((pet) => pet.id))
-  const partner = createBlankPet(id, label)
+  const partner = createBlankPet(id, label, nextPetPortraitNumber(data))
   const petFamilies = current
     ? data.petFamilies.map((family) => family.id === current.id ? { ...family, parentPetIds: [...family.parentPetIds, id] } : family)
     : [...data.petFamilies, { id: makeId(`pet-family-${petId}`, data.petFamilies.map((family) => family.id)), parentPetIds: [petId, id], children: [] }]
