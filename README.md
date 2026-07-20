@@ -45,7 +45,7 @@ The downloaded file is a complete replacement, not a partial patch.
 
 ## Data and privacy
 
-`public/tree-data.json` contains the complete version-4 public archive:
+`public/tree-data.json` contains the complete version-5 public archive:
 
 - `site`: title, subtitle, theme, and the local dashboard credential hash.
 - `people`: stable IDs, permanent portrait numbers, public details, life status, optional death dates, a `links` array, and protection state.
@@ -57,9 +57,9 @@ All repository data, images, dates, and links are publicly readable. The PIN onl
 
 People and pets have independent portrait-number namespaces. Automatic paths are `portraits/{number}.png` for people and `portraits/pets/{number}.png` for pets. Only repository-relative PNG paths and explicit HTTPS PNG URLs are accepted; JPG, JPEG, and WebP portraits are rejected. Missing PNG files are valid and display the silhouette fallback. Images are center-cropped, never stretched, and each non-empty story link must use HTTP or HTTPS.
 
-Version-1, version-2, and version-3 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 4, including `deathDate: string` and `links: string[]` for every person and pet.
+Version-1 through version-4 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 5. Legacy `ageOverride` values are removed because age is now always calculated.
 
-People birth dates and all death dates use `YYYY-MM-DD`. Pet birth dates accept either a known year (`YYYY`) or a full date (`YYYY-MM-DD`). The Death date editor appears only for records marked Dead and is cleared when a record is changed back to Alive. Public details likewise show Died only for dead records. Exact dates calculate age at death; year-only pet births prefer Age override and otherwise use the current or death year.
+People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, including month-name input such as `2020-March` or `2020-Mar-15`; month names normalize to numeric form when the field loses focus. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. The Death date editor is highlighted when it appears and is cleared when a record changes back to Alive.
 
 ## Ordering rules
 
@@ -67,4 +67,4 @@ Children are stored as `{ "personId": "…", "birthOrder": 1 }`. The graph sorts
 
 The Pets graph is chronological: the oldest known birth year appears at the top, pets from the same year appear side by side, and pets without a known year appear in an **Unknown year** row. Each species has a stable horizontal column, so a growing cat lineage cannot overlap or mix with the dog, bird, or other species columns. Full dates are ordered oldest-first within their year. Pet parent and offspring connectors still come from `petFamilies`; stored pet birth order is retained but does not control vertical placement.
 
-Protected records can be edited but not deleted. Removing one parent retains children under the remaining parent. Removing every parent of a family unit requires confirmation and lists the descendant branch that will also be removed. The dashboard supports selecting and deleting multiple non-protected records together.
+Protected records can be edited but not deleted. Removing one parent retains children under the remaining parent. Removing every parent of a family unit requires confirmation and lists the descendant or offspring branch that will also be removed. Both People and Pets support selecting and deleting multiple non-protected records together.

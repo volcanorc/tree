@@ -57,7 +57,7 @@ function ArchiveView({ data, view }: { data: TreeData; view: 'family' | 'pets' }
         <span className="archive-mark" aria-hidden="true">HS</span>
         <div>
           <p className="section-kicker">{isFamily ? 'A family record' : 'An evolving record'}</p>
-          <h2>{isFamily ? 'HERMOSO X Sullano' : 'Every companion belongs in the story'}</h2>
+          <h2>{isFamily ? 'Hermoso - Sullano' : 'Every companion belongs in the story'}</h2>
           <p>
             {isFamily
               ? 'From the founding generation to every branch that follows, each name, story, and connection is preserved as part of a living family legacy.'
@@ -92,7 +92,15 @@ export default function App() {
         const stored = localStorage.getItem(DRAFT_KEY)
         if (stored) {
           try {
-            const draft = migrateTreeData(JSON.parse(stored))
+            const migratedDraft = migrateTreeData(JSON.parse(stored))
+            const draft = {
+              ...migratedDraft,
+              site: {
+                ...migratedDraft.site,
+                adminUser: published.site.adminUser,
+                adminPinHash: published.site.adminPinHash,
+              },
+            }
             if (validateTreeData(draft).valid) {
               setData(draft)
               localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))

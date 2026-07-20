@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import seed from '../test/fixtures/tree-data-v4.json'
 import type { TreeData } from '../types'
-import { addPartner } from '../lib/data'
+import { addPartner, createBlankPet } from '../lib/data'
 import { Dashboard } from './Dashboard'
 
 function DashboardHarness({
@@ -188,6 +188,7 @@ describe('Dashboard layout and people editor', () => {
     expect(screen.queryByLabelText('Death date')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'dead' } })
     const deathDate = screen.getByLabelText('Death date')
+    expect(deathDate.closest('label')).toHaveClass('death-date-reveal')
     fireEvent.change(deathDate, { target: { value: '2020-03-04' } })
     expect(deathDate).toHaveValue('2020-03-04')
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'alive' } })
@@ -221,14 +222,54 @@ describe('Dashboard pets editor', () => {
 
   it('accepts a pet birth year and conditionally clears the death date', () => {
     openPets()
-    const birthDate = screen.getByLabelText('Birth date or year')
+    const birthDate = screen.getByLabelText('Birth date')
     expect(birthDate).toHaveValue('2013')
     expect(birthDate).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText(/Calculated age/)).toHaveValue(String(new Date().getFullYear() - 2013))
+    expect(screen.getByLabelText(/Calculated age/)).toHaveAttribute('readonly')
     expect(screen.getByLabelText('Death date')).toHaveValue('')
-    fireEvent.change(screen.getByLabelText('Death date'), { target: { value: '2024-05-01' } })
+    fireEvent.change(birthDate, { target: { value: '2020-March' } })
+    fireEvent.blur(birthDate)
+    expect(birthDate).toHaveValue('2020-03')
+    const deathDate = screen.getByLabelText('Death date')
+    expect(deathDate.closest('label')).toHaveClass('death-date-reveal')
+    fireEvent.change(deathDate, { target: { value: '2024-May' } })
+    fireEvent.blur(deathDate)
+    expect(deathDate).toHaveValue('2024-05')
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'alive' } })
     expect(screen.queryByLabelText('Death date')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'dead' } })
     expect(screen.getByLabelText('Death date')).toHaveValue('')
+  })
+
+  it('bulk-selects deletable pets, warns about offspring, and supports immediate consecutive deletion', () => {
+    const initial = structuredClone(seed) as TreeData
+    initial.pets.push(
+      createBlankPet('parent-cat', 'Parent Cat', 2),
+      createBlankPet('kitten', 'Kitten', 3),
+      createBlankPet('leaf-cat', 'Leaf Cat', 4),
+    )
+    initial.petFamilies.push({
+      id: 'parent-cat-family',
+      parentPetIds: ['parent-cat'],
+      children: [{ petId: 'kitten', birthOrder: 1 }],
+    })
+    render(<DashboardHarness initial={initial} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Pets' }))
+    const list = screen.getByRole('complementary', { name: 'Pets' })
+    fireEvent.click(within(list).getByRole('checkbox', { name: 'Pets' }))
+    expect(within(list).getByRole('checkbox', { name: 'Select Iring Brown' })).toBeDisabled()
+    fireEvent.click(within(list).getByRole('checkbox', { name: 'Select Parent Cat' }))
+    expect(within(list).getByText('1 selected')).toBeInTheDocument()
+    fireEvent.click(within(list).getByRole('button', { name: 'Delete selected' }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('Delete 2 pets?')
+    expect(dialog).toHaveTextContent('offspring branch: Kitten')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete permanently' }))
+    expect(within(list).queryByRole('button', { name: /Parent Cat/i })).not.toBeInTheDocument()
+    expect(screen.getByText('Editing: Leaf Cat')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete pet' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }))
+    expect(within(list).queryByRole('button', { name: /Leaf Cat/i })).not.toBeInTheDocument()
   })
 })

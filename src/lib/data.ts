@@ -7,6 +7,7 @@ import type {
   Person,
   PersonDeletePlan,
   Pet,
+  PetDeletePlan,
   PetChildLink,
   PetFamilyUnit,
   TreeData,
@@ -36,35 +37,113 @@ export function displayValue(value: unknown): string {
 
 export function calculateAge(
   birthDate: string,
-  ageOverride: number | null,
   today = new Date(),
   deathDate = '',
   status: LifeStatus = 'alive',
-  allowYearOnly = false,
+  allowPartial = false,
 ): number | '?' {
-  const override = typeof ageOverride === 'number' && ageOverride >= 0 ? ageOverride : null
-  if (allowYearOnly && /^\d{4}$/.test(birthDate)) {
-    if (override !== null) return override
-    const end = status === 'dead' ? parseFullDate(deathDate) : today
-    if (!end) return '?'
-    return Math.max(0, end.getFullYear() - Number(birthDate))
-  }
-  const birth = parseFullDate(birthDate)
-  if (birth && birth <= today) {
-    const end = status === 'dead' ? parseFullDate(deathDate) : today
-    if (!end) return override ?? '?'
-    let age = end.getFullYear() - birth.getFullYear()
-    const monthDelta = end.getMonth() - birth.getMonth()
-    if (monthDelta < 0 || (monthDelta === 0 && end.getDate() < birth.getDate())) age -= 1
-    return Math.max(0, age)
-  }
-  return override ?? '?'
+  const birth = parseArchiveDate(birthDate, allowPartial)
+  if (!birth || compareDateParts(birth, localDateParts(today)) > 0) return '?'
+  const parsedDeath = status === 'dead' ? parseArchiveDate(deathDate, allowPartial) : null
+  const end = parsedDeath ?? localDateParts(today)
+  if (compareDatePartsKnown(end, birth) < 0) return '?'
+
+  let age = end.year - birth.year
+  if (birth.precision === 'year' || end.precision === 'year') return Math.max(0, age)
+  if (end.month < birth.month) age -= 1
+  else if (end.month === birth.month && birth.precision === 'day' && end.precision === 'day' && end.day < birth.day) age -= 1
+  return Math.max(0, age)
 }
 
 export function yearFromDate(value: string): number | null {
-  if (/^\d{4}$/.test(value)) return Number(value)
-  const date = parseFullDate(value)
-  return date ? date.getFullYear() : null
+  return parseArchiveDate(value, true)?.year ?? null
+}
+
+export type DatePrecision = 'year' | 'month' | 'day'
+
+export interface ParsedArchiveDate {
+  year: number
+  month: number
+  day: number
+  precision: DatePrecision
+  canonical: string
+}
+
+const MONTH_NAMES = new Map([
+  ['january', 1], ['jan', 1], ['february', 2], ['feb', 2], ['march', 3], ['mar', 3],
+  ['april', 4], ['apr', 4], ['may', 5], ['june', 6], ['jun', 6], ['july', 7], ['jul', 7],
+  ['august', 8], ['aug', 8], ['september', 9], ['sep', 9], ['sept', 9], ['october', 10], ['oct', 10],
+  ['november', 11], ['nov', 11], ['december', 12], ['dec', 12],
+])
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
+  return [4, 6, 9, 11].includes(month) ? 30 : 31
+}
+
+function localDateParts(date: Date): ParsedArchiveDate {
+  const year = date.getFullYear()
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  return { year, month, day, precision: 'day', canonical: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` }
+}
+
+export function parseArchiveDate(value: string, allowPartial = false): ParsedArchiveDate | null {
+  const parts = value.trim().toLowerCase().split('-')
+  if (!parts[0] || !/^\d{4}$/.test(parts[0]) || parts.length > 3) return null
+  const year = Number(parts[0])
+  if (year < 1) return null
+  if (parts.length === 1) {
+    return allowPartial ? { year, month: 1, day: 1, precision: 'year', canonical: parts[0] } : null
+  }
+  const month = /^\d{1,2}$/.test(parts[1]) ? Number(parts[1]) : MONTH_NAMES.get(parts[1])
+  if (!month || month < 1 || month > 12) return null
+  if (parts.length === 2) {
+    if (!allowPartial) return null
+    return { year, month, day: 1, precision: 'month', canonical: `${parts[0]}-${String(month).padStart(2, '0')}` }
+  }
+  if (!/^\d{1,2}$/.test(parts[2])) return null
+  const day = Number(parts[2])
+  if (day < 1 || day > daysInMonth(year, month)) return null
+  return {
+    year,
+    month,
+    day,
+    precision: 'day',
+    canonical: `${parts[0]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  }
+}
+
+export function normalizeArchiveDate(value: string, allowPartial = false): string {
+  return parseArchiveDate(value, allowPartial)?.canonical ?? value.trim()
+}
+
+function compareDateParts(left: ParsedArchiveDate, right: ParsedArchiveDate): number {
+  return left.year - right.year || left.month - right.month || left.day - right.day
+}
+
+function compareDatePartsKnown(left: ParsedArchiveDate, right: ParsedArchiveDate): number {
+  if (left.year !== right.year) return left.year - right.year
+  if (left.precision === 'year' || right.precision === 'year') return 0
+  if (left.month !== right.month) return left.month - right.month
+  if (left.precision === 'month' || right.precision === 'month') return 0
+  return left.day - right.day
+}
+
+export function dateSortKey(value: string): string {
+  const parsed = parseArchiveDate(value, true)
+  if (!parsed) return '9999-99-99'
+  const month = parsed.precision === 'year' ? '00' : String(parsed.month).padStart(2, '0')
+  const day = parsed.precision === 'day' ? String(parsed.day).padStart(2, '0') : '00'
+  return `${String(parsed.year).padStart(4, '0')}-${month}-${day}`
+}
+
+export function dateFieldError(value: string, allowPartial: boolean, today = new Date()): string {
+  if (!value.trim()) return ''
+  const parsed = parseArchiveDate(value, allowPartial)
+  if (!parsed) return allowPartial ? 'Use YYYY, YYYY-MM, or YYYY-MM-DD.' : 'Use YYYY-MM-DD.'
+  if (compareDateParts(parsed, localDateParts(today)) > 0) return 'Date cannot be in the future.'
+  return ''
 }
 
 export function sortChildren<T extends { birthOrder: number }>(children: T[]): T[] {
@@ -137,30 +216,21 @@ function duplicateValues(values: string[]): string[] {
   return [...duplicates]
 }
 
-function parseFullDate(value: string): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
-  const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime())) return null
-  const [year, month, day] = value.split('-').map(Number)
-  return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day ? date : null
-}
-
-function validateDate(value: string, label: string, field: 'birth' | 'death', errors: string[], allowYearOnly = false): void {
+function validateDate(value: string, label: string, field: 'birth' | 'death', errors: string[], allowPartial = false): void {
   if (!value) return
-  const yearOnly = allowYearOnly && /^\d{4}$/.test(value)
-  const date = yearOnly ? new Date(`${value}-01-01T00:00:00`) : parseFullDate(value)
-  if (!date || Number(value.slice(0, 4)) < 1) errors.push(`${label} has an invalid ${field} date.`)
-  else if (yearOnly ? Number(value) > new Date().getFullYear() : date > new Date()) errors.push(`${label} has a ${field} date in the future.`)
+  const parsed = parseArchiveDate(value, allowPartial)
+  if (!parsed) errors.push(`${label} has an invalid ${field} date.`)
+  else if (compareDateParts(parsed, localDateParts(new Date())) > 0) errors.push(`${label} has a ${field} date in the future.`)
 }
 
-function validateLifeDates(entity: Pick<Person | Pet, 'displayName' | 'id' | 'birthDate' | 'deathDate' | 'status'>, errors: string[], allowBirthYear: boolean): void {
+function validateLifeDates(entity: Pick<Person | Pet, 'displayName' | 'id' | 'birthDate' | 'deathDate' | 'status'>, errors: string[], allowPartial: boolean): void {
   const label = entity.displayName || entity.id
-  validateDate(entity.birthDate, label, 'birth', errors, allowBirthYear)
-  validateDate(entity.deathDate, label, 'death', errors)
+  validateDate(entity.birthDate, label, 'birth', errors, allowPartial)
+  validateDate(entity.deathDate, label, 'death', errors, allowPartial)
   if (entity.status === 'alive' && entity.deathDate) errors.push(`${label} cannot have a death date while marked alive.`)
-  const birthYear = yearFromDate(entity.birthDate)
-  const death = parseFullDate(entity.deathDate)
-  if (birthYear !== null && death && (death.getFullYear() < birthYear || (parseFullDate(entity.birthDate)?.getTime() ?? 0) > death.getTime())) {
+  const birth = parseArchiveDate(entity.birthDate, allowPartial)
+  const death = parseArchiveDate(entity.deathDate, allowPartial)
+  if (birth && death && compareDatePartsKnown(death, birth) < 0) {
     errors.push(`${label} has a death date before the birth date.`)
   }
 }
@@ -209,10 +279,6 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 function lifeStatus(value: unknown): LifeStatus {
   return value === 'dead' ? 'dead' : 'alive'
 }
@@ -227,7 +293,6 @@ function iringBrown(): Pet {
     birthDate: '2013',
     birthDetails: 'Trash can',
     deathDate: '',
-    ageOverride: 11,
     personality: 'Slow',
     biography: '',
     relationshipLabel: 'Pet founder',
@@ -253,9 +318,9 @@ export function migrateTreeData(input: unknown): TreeData {
     petFamilies?: Array<Partial<PetFamilyUnit>>
   }
   const raw = input as LegacyTreeData
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4) throw new Error('Unsupported or missing data version.')
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4 && raw.version !== 5) throw new Error('Unsupported or missing data version.')
   const rawPeople = Array.isArray(raw.people) ? raw.people : []
-  const hasVersionTwoFields = raw.version === 2 || raw.version === 3 || raw.version === 4
+  const hasVersionTwoFields = raw.version === 2 || raw.version === 3 || raw.version === 4 || raw.version === 5
   const occupied = new Set<number>()
   if (hasVersionTwoFields) {
     rawPeople.forEach((person) => {
@@ -289,7 +354,6 @@ export function migrateTreeData(input: unknown): TreeData {
       birthDate: stringValue(person.birthDate),
       birthDetails: stringValue(person.birthDetails),
       deathDate: stringValue(person.deathDate),
-      ageOverride: numberOrNull(person.ageOverride),
       personality: stringValue(person.personality),
       biography: stringValue(person.biography),
       relationshipLabel: stringValue(person.relationshipLabel),
@@ -303,7 +367,7 @@ export function migrateTreeData(input: unknown): TreeData {
   })
   const rawPets = Array.isArray(raw.pets) ? raw.pets : []
   const occupiedPetPortraits = new Set<number>()
-  if (raw.version === 3 || raw.version === 4) {
+  if (raw.version === 3 || raw.version === 4 || raw.version === 5) {
     rawPets.forEach((pet) => {
       if (Number.isInteger(pet.portraitNumber) && Number(pet.portraitNumber) > 0) occupiedPetPortraits.add(Number(pet.portraitNumber))
     })
@@ -319,7 +383,7 @@ export function migrateTreeData(input: unknown): TreeData {
     return number
   }
   const pets: Pet[] = rawPets.map((pet) => {
-    const portraitNumber = raw.version === 3 || raw.version === 4
+    const portraitNumber = raw.version === 3 || raw.version === 4 || raw.version === 5
       ? Number(pet.portraitNumber)
       : stringValue(pet.id) === 'iring-brown' ? 1 : takeNextPetPortrait()
     const links = Array.isArray(pet.links)
@@ -334,7 +398,6 @@ export function migrateTreeData(input: unknown): TreeData {
       birthDate: stringValue(pet.birthDate),
       birthDetails: stringValue(pet.birthDetails),
       deathDate: stringValue(pet.deathDate),
-      ageOverride: numberOrNull(pet.ageOverride),
       personality: stringValue(pet.personality),
       biography: stringValue(pet.biography),
       relationshipLabel: stringValue(pet.relationshipLabel),
@@ -355,7 +418,7 @@ export function migrateTreeData(input: unknown): TreeData {
   const site = raw.site ?? ({} as TreeData['site'])
   const subtitle = stringValue(site.subtitle)
   return {
-    version: 4,
+    version: 5,
     site: {
       title: stringValue(site.title),
       subtitle: !subtitle || subtitle === OLD_DEFAULT_SUBTITLE ? DEFAULT_SUBTITLE : subtitle,
@@ -384,7 +447,7 @@ export function migrateTreeData(input: unknown): TreeData {
 
 export function validateTreeData(data: TreeData): ValidationResult {
   const errors: string[] = []
-  if (!data || data.version !== 4) errors.push('Unsupported or missing data version.')
+  if (!data || data.version !== 5) errors.push('Unsupported or missing data version.')
   if (!data.site?.title?.trim()) errors.push('The site title is required.')
 
   const personIds = data.people.map((person) => person.id)
@@ -401,6 +464,9 @@ export function validateTreeData(data: TreeData): ValidationResult {
   duplicateValues(data.petFamilies.map((family) => family.id)).forEach((id) => errors.push(`Duplicate pet-family ID: ${id}.`))
   duplicateValues(data.families.flatMap((family) => family.children.map((child) => child.personId))).forEach((id) =>
     errors.push(`Person ${id} belongs to more than one parental family unit.`),
+  )
+  duplicateValues(data.petFamilies.flatMap((family) => family.children.map((child) => child.petId))).forEach((id) =>
+    errors.push(`Pet ${id} belongs to more than one parental pet-family unit.`),
   )
 
   const people = new Set(personIds)
@@ -439,6 +505,7 @@ export function validateTreeData(data: TreeData): ValidationResult {
   if (hasCycle(data.families)) errors.push('The human family graph contains an ancestry cycle.')
 
   data.pets.forEach((pet) => {
+    if (!pet.id.trim()) errors.push('Every pet requires an ID.')
     if (!Number.isInteger(pet.portraitNumber) || pet.portraitNumber < 1) errors.push(`${pet.displayName || pet.id} has an invalid pet portrait number.`)
     if (!LIFE_STATUSES.has(pet.status)) errors.push(`${pet.displayName || pet.id} has an invalid status.`)
     validateLifeDates(pet, errors, true)
@@ -451,6 +518,7 @@ export function validateTreeData(data: TreeData): ValidationResult {
   })
   data.petFamilies.forEach((family) => {
     if (family.parentPetIds.length < 1 || family.parentPetIds.length > 2) errors.push(`${family.id} must contain one or two pet parents.`)
+    if (duplicateValues(family.parentPetIds).length) errors.push(`${family.id} contains the same pet parent more than once.`)
     family.parentPetIds.forEach((id) => {
       if (!pets.has(id)) errors.push(`${family.id} references missing pet parent ${id}.`)
     })
@@ -512,7 +580,6 @@ export function createBlankPerson(id: string, label: string, portraitNumber = 1)
     birthDate: '',
     birthDetails: '',
     deathDate: '',
-    ageOverride: null,
     personality: '',
     biography: '',
     relationshipLabel: 'Family member',
@@ -535,7 +602,6 @@ export function createBlankPet(id: string, label: string, portraitNumber = 1): P
     birthDate: '',
     birthDetails: '',
     deathDate: '',
-    ageOverride: null,
     personality: '',
     biography: '',
     relationshipLabel: 'Pet',
@@ -624,19 +690,19 @@ export function planPersonDeletion(data: TreeData, requestedIds: string[]): Pers
   if (protectedPerson) return { requestedIds: requested, deleteIds: [], cascadeIds: [], blockedReason: `${protectedPerson.displayName} is protected and cannot be deleted.` }
   const deleteSet = new Set(requested)
   const cascade = new Set<string>()
-  const collectBranch = (personId: string) => {
-    if (deleteSet.has(personId)) return
-    deleteSet.add(personId)
-    cascade.add(personId)
-    data.families.filter((family) => family.parentIds.includes(personId)).forEach((family) => {
-      family.children.forEach((child) => collectBranch(child.personId))
+  let expanded = true
+  while (expanded) {
+    expanded = false
+    data.families.forEach((family) => {
+      if (family.parentIds.length === 0 || !family.parentIds.every((id) => deleteSet.has(id))) return
+      family.children.forEach((child) => {
+        if (deleteSet.has(child.personId)) return
+        deleteSet.add(child.personId)
+        cascade.add(child.personId)
+        expanded = true
+      })
     })
   }
-  data.families.forEach((family) => {
-    if (family.parentIds.length > 0 && family.parentIds.every((id) => deleteSet.has(id))) {
-      family.children.forEach((child) => collectBranch(child.personId))
-    }
-  })
   const protectedCascade = [...deleteSet].map((id) => data.people.find((person) => person.id === id)).find((person) => person?.protected)
   if (protectedCascade) {
     return {
@@ -671,16 +737,59 @@ export function deletePerson(data: TreeData, personId: string): DeleteResult {
   return { data: applyPersonDeletePlan(data, plan), deleted: plan.deleteIds.length > 0 }
 }
 
+export function planPetDeletion(data: TreeData, requestedIds: string[]): PetDeletePlan {
+  const requested = [...new Set(requestedIds)].filter((id) => data.pets.some((pet) => pet.id === id))
+  const protectedPet = requested.map((id) => data.pets.find((pet) => pet.id === id)).find((pet) => pet?.protected)
+  if (protectedPet) return { requestedIds: requested, deleteIds: [], cascadeIds: [], blockedReason: `${protectedPet.displayName} is protected and cannot be deleted.` }
+
+  const deleteSet = new Set(requested)
+  const cascade = new Set<string>()
+  let expanded = true
+  while (expanded) {
+    expanded = false
+    data.petFamilies.forEach((family) => {
+      if (family.parentPetIds.length === 0 || !family.parentPetIds.every((id) => deleteSet.has(id))) return
+      family.children.forEach((child) => {
+        if (deleteSet.has(child.petId)) return
+        deleteSet.add(child.petId)
+        cascade.add(child.petId)
+        expanded = true
+      })
+    })
+  }
+
+  const protectedCascade = [...deleteSet].map((id) => data.pets.find((pet) => pet.id === id)).find((pet) => pet?.protected)
+  if (protectedCascade) {
+    return {
+      requestedIds: requested,
+      deleteIds: [],
+      cascadeIds: [...cascade],
+      blockedReason: `The deletion would reach protected pet ${protectedCascade.displayName}.`,
+    }
+  }
+  return { requestedIds: requested, deleteIds: [...deleteSet], cascadeIds: [...cascade] }
+}
+
+export function applyPetDeletePlan(data: TreeData, plan: PetDeletePlan): TreeData {
+  if (plan.blockedReason || plan.deleteIds.length === 0) return data
+  const deleteSet = new Set(plan.deleteIds)
+  const petFamilies = data.petFamilies.flatMap((family) => {
+    const removedParent = family.parentPetIds.some((id) => deleteSet.has(id))
+    const parentPetIds = family.parentPetIds.filter((id) => !deleteSet.has(id))
+    const children = family.children.filter((child) => !deleteSet.has(child.petId))
+    if (parentPetIds.length === 0) return []
+    if (removedParent && children.length === 0) return []
+    return [{ ...family, parentPetIds, children }]
+  })
+  return { ...data, pets: data.pets.filter((pet) => !deleteSet.has(pet.id)), petFamilies }
+}
+
 export function deletePet(data: TreeData, petId: string): DeleteResult {
   const pet = data.pets.find((candidate) => candidate.id === petId)
   if (!pet) return { data, deleted: false, reason: 'Pet not found.' }
-  if (pet.protected) return { data, deleted: false, reason: 'This pet founder cannot be deleted.' }
-  const parentFamily = data.petFamilies.find((family) => family.parentPetIds.includes(petId))
-  if (parentFamily?.children.length && parentFamily.parentPetIds.length === 1) return { data, deleted: false, reason: 'Reassign or remove offspring before deleting their only parent.' }
-  const petFamilies = data.petFamilies
-    .map((family) => ({ ...family, parentPetIds: family.parentPetIds.filter((id) => id !== petId), children: family.children.filter((child) => child.petId !== petId) }))
-    .filter((family) => family.parentPetIds.length > 0)
-  return { data: { ...data, pets: data.pets.filter((candidate) => candidate.id !== petId), petFamilies }, deleted: true }
+  const plan = planPetDeletion(data, [petId])
+  if (plan.blockedReason) return { data, deleted: false, reason: plan.blockedReason }
+  return { data: applyPetDeletePlan(data, plan), deleted: plan.deleteIds.length > 0 }
 }
 
 export function updateBirthOrder(data: TreeData, personId: string, birthOrder: number): TreeData {

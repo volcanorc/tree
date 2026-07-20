@@ -17,7 +17,6 @@ export interface Person {
   birthDate: string
   birthDetails: string
   deathDate: string
-  ageOverride: number | null
   personality: string
   biography: string
   relationshipLabel: string
@@ -49,7 +48,6 @@ export interface Pet {
   birthDate: string
   birthDetails: string
   deathDate: string
-  ageOverride: number | null
   personality: string
   biography: string
   relationshipLabel: string
@@ -74,7 +72,7 @@ export interface PetFamilyUnit {
 }
 
 export interface TreeData {
-  version: 4
+  version: 5
   site: SiteConfig
   people: Person[]
   families: FamilyUnit[]
@@ -94,6 +92,13 @@ export interface DeleteResult {
 }
 
 export interface PersonDeletePlan {
+  requestedIds: string[]
+  deleteIds: string[]
+  cascadeIds: string[]
+  blockedReason?: string
+}
+
+export interface PetDeletePlan {
   requestedIds: string[]
   deleteIds: string[]
   cascadeIds: string[]

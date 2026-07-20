@@ -204,6 +204,11 @@ input, select, textarea { width: 100%; border: 1px solid rgba(167,185,210,.19); 
 textarea { min-height: 95px; resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { border-color: rgba(200,131,85,.72); box-shadow: 0 0 0 3px rgba(200,131,85,.09); }
 input[aria-invalid="true"] { border-color: rgba(225,112,92,.72); box-shadow: 0 0 0 3px rgba(204,78,58,.08); }
+.death-date-reveal input { animation: death-date-cue 950ms ease-in-out 3; }
+@keyframes death-date-cue {
+  0%, 100% { border-color: rgba(167,185,210,.19); box-shadow: 0 0 0 0 rgba(200,131,85,0); }
+  50% { border-color: rgba(200,131,85,.7); box-shadow: 0 0 0 3px rgba(200,131,85,.1), 0 0 18px rgba(200,131,85,.12); }
+}
 .form-error, .field-warning { color: #f3a18f; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 .primary-button, .secondary-button, .ghost-button, .danger-button, .mini-button { min-height: 40px; border: 1px solid transparent; border-radius: 2px; padding: 9px 15px; cursor: pointer; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
@@ -358,6 +363,8 @@ label small { color: #687487; line-height: 1.4; text-transform: none; letter-spa
   .two-column { grid-template-columns: 1fr; }
   .full-width { grid-column: auto; }
   .record-editor { grid-template-columns: 1fr; }
+  .dashboard-tabs, .record-list { scrollbar-width: none; -ms-overflow-style: none; }
+  .dashboard-tabs::-webkit-scrollbar, .record-list::-webkit-scrollbar { display: none; }
   .record-list { max-height: 205px; border-right: 0; border-bottom: 1px solid var(--line); }
   .record-form { padding: 20px 16px 25px; }
   .record-form-header h2 { font-size: 2rem; }
@@ -371,4 +378,5 @@ label small { color: #687487; line-height: 1.4; text-transform: none; letter-spa
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .reveal { opacity: 1; transform: none; }
+  .death-date-reveal input { animation: none !important; border-color: rgba(200,131,85,.7); box-shadow: 0 0 0 3px rgba(200,131,85,.1); }
 }

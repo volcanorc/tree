@@ -1,13 +1,15 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react'
-import type { PersonDeletePlan, Pet, Person, TreeData } from '../types'
+import type { PersonDeletePlan, PetDeletePlan, Pet, Person, TreeData } from '../types'
 import {
   addChild,
   addPartner,
   addPetOffspring,
   addPetPartner,
   createBlankPet,
+  applyPetDeletePlan,
   applyPersonDeletePlan,
-  deletePet,
+  calculateAge,
+  dateFieldError,
   exportTreeData,
   getBirthOrder,
   getPetBirthOrder,
@@ -16,15 +18,18 @@ import {
   isSafeExternalUrl,
   isSafePortrait,
   migrateTreeData,
+  normalizeArchiveDate,
   nextPetPortraitNumber,
   personPortraitPath,
   petPortraitPath,
+  planPetDeletion,
   planPersonDeletion,
   updateBirthOrder,
   updatePetBirthOrder,
   validateTreeData,
 } from '../lib/data'
 import { verifyLogin } from '../lib/auth'
+import { useCurrentDate } from '../hooks/useCurrentDate'
 import { LineageGraph } from './LineageGraph'
 
 interface DashboardProps {
@@ -49,7 +54,6 @@ const textFields: Array<{
   { key: 'nickname', label: 'Nickname', placeholder: '?' },
   { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY-MM-DD' },
   { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
-  { key: 'ageOverride', label: 'Age override', placeholder: 'Used only when birth date is empty' },
   { key: 'relationshipLabel', label: 'Relationship label', placeholder: 'e.g. Eldest son' },
   { key: 'personality', label: 'Personality', placeholder: 'A few defining qualities' },
   { key: 'biography', label: 'Short biography', placeholder: 'A public, concise life note', textarea: true },
@@ -65,9 +69,8 @@ const petTextFields: Array<{
   { key: 'displayName', label: 'Name', placeholder: 'Pet name' },
   { key: 'species', label: 'Species', placeholder: 'Dog, cat, bird…' },
   { key: 'breed', label: 'Breed', placeholder: '?' },
-  { key: 'birthDate', label: 'Birth date or year', placeholder: 'YYYY or YYYY-MM-DD' },
+  { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY, YYYY-MM, or YYYY-MM-DD' },
   { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
-  { key: 'ageOverride', label: 'Age override', placeholder: 'Used first for a year-only or unknown birth date' },
   { key: 'personality', label: 'Personality', placeholder: 'Temperament and favorite things' },
   { key: 'biography', label: 'Short biography', placeholder: 'A short public story', textarea: true },
   { key: 'portrait', label: 'Portrait path or HTTPS PNG URL', placeholder: 'portraits/pets/1.png' },
@@ -194,10 +197,14 @@ export function Dashboard(props: DashboardProps) {
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedPersonIds, setSelectedPersonIds] = useState<Set<string>>(new Set())
   const [pendingDelete, setPendingDelete] = useState<PersonDeletePlan | null>(null)
+  const [petSelectionMode, setPetSelectionMode] = useState(false)
+  const [selectedPetIds, setSelectedPetIds] = useState<Set<string>>(new Set())
+  const [pendingPetDelete, setPendingPetDelete] = useState<PetDeletePlan | null>(null)
   const [showChildChooser, setShowChildChooser] = useState(false)
   const [showPartnerChooser, setShowPartnerChooser] = useState(false)
   const importInput = useRef<HTMLInputElement>(null)
   const validation = useMemo(() => validateTreeData(data), [data])
+  const currentDate = useCurrentDate()
 
   if (!authenticated) {
     return <DashboardLogin data={data} onAuthenticated={onAuthenticated} />
@@ -234,6 +241,16 @@ export function Dashboard(props: DashboardProps) {
         ? `Pet portrait ${selectedPet.portraitNumber} is already assigned to another pet.`
         : ''
     : ''
+  const personBirthDateError = selectedPerson ? dateFieldError(selectedPerson.birthDate, false, currentDate) : ''
+  const personDeathDateError = selectedPerson ? dateFieldError(selectedPerson.deathDate, false, currentDate) : ''
+  const petBirthDateError = selectedPet ? dateFieldError(selectedPet.birthDate, true, currentDate) : ''
+  const petDeathDateError = selectedPet ? dateFieldError(selectedPet.deathDate, true, currentDate) : ''
+  const selectedPersonAge = selectedPerson
+    ? calculateAge(selectedPerson.birthDate, currentDate, selectedPerson.deathDate, selectedPerson.status)
+    : '?'
+  const selectedPetAge = selectedPet
+    ? calculateAge(selectedPet.birthDate, currentDate, selectedPet.deathDate, selectedPet.status, true)
+    : '?'
 
   function updateSite(field: 'title' | 'subtitle', value: string) {
     onChange({ ...data, site: { ...data.site, [field]: value } })
@@ -336,7 +353,8 @@ export function Dashboard(props: DashboardProps) {
 
   function confirmPersonDeletion() {
     if (!pendingDelete) return
-    const currentIndex = Math.max(0, data.people.findIndex((person) => person.id === selectedPersonId))
+    const anchorId = pendingDelete.deleteIds.includes(selectedPersonId) ? selectedPersonId : pendingDelete.requestedIds[0]
+    const currentIndex = Math.max(0, data.people.findIndex((person) => person.id === anchorId))
     const removedNames = pendingDelete.deleteIds
       .map((id) => data.people.find((person) => person.id === id)?.displayName)
       .filter(Boolean)
@@ -392,14 +410,45 @@ export function Dashboard(props: DashboardProps) {
 
   function removeSelectedPet() {
     if (!selectedPet) return
-    const result = deletePet(data, selectedPet.id)
-    if (!result.deleted) {
-      setStatus(result.reason ?? 'This pet cannot be deleted.')
+    beginPetDeletion([selectedPet.id])
+  }
+
+  function beginPetDeletion(ids: string[]) {
+    const plan = planPetDeletion(data, ids)
+    if (plan.blockedReason) {
+      setStatus(plan.blockedReason)
       return
     }
-    onChange(result.data)
-    setSelectedPetId(result.data.pets[0]?.id ?? '')
-    setStatus(`${selectedPet.displayName} was removed from this local draft.`)
+    if (!plan.deleteIds.length) return
+    setPendingPetDelete(plan)
+  }
+
+  function confirmPetDeletion() {
+    if (!pendingPetDelete) return
+    const anchorId = pendingPetDelete.deleteIds.includes(selectedPetId) ? selectedPetId : pendingPetDelete.requestedIds[0]
+    const currentIndex = Math.max(0, data.pets.findIndex((pet) => pet.id === anchorId))
+    const removedNames = pendingPetDelete.deleteIds
+      .map((id) => data.pets.find((pet) => pet.id === id)?.displayName)
+      .filter(Boolean)
+    const next = applyPetDeletePlan(data, pendingPetDelete)
+    const nextSelected = next.pets[Math.min(currentIndex, Math.max(0, next.pets.length - 1))]
+    onChange(next)
+    setSelectedPetId(nextSelected?.id ?? '')
+    setSelectedPetIds(new Set())
+    setPetSelectionMode(false)
+    setPendingPetDelete(null)
+    setStatus(`${removedNames.join(', ')} ${removedNames.length === 1 ? 'was' : 'were'} removed from this local draft.`)
+  }
+
+  function toggleBulkPet(id: string) {
+    const pet = data.pets.find((candidate) => candidate.id === id)
+    if (!pet || pet.protected) return
+    setSelectedPetIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   async function copyJson() {
@@ -604,14 +653,13 @@ export function Dashboard(props: DashboardProps) {
                           <input
                             value={String(selectedPerson[field.key] ?? '')}
                             placeholder={field.placeholder}
-                            type={field.key === 'birthDate' ? 'date' : field.key === 'ageOverride' ? 'number' : 'text'}
-                            min={field.key === 'ageOverride' ? 0 : undefined}
-                            onChange={(event) => updatePerson({
-                              [field.key]: field.key === 'ageOverride'
-                                ? (event.target.value === '' ? null : Number(event.target.value))
-                                : event.target.value,
-                            } as Partial<Person>)}
+                            type={field.key === 'birthDate' ? 'date' : 'text'}
+                            aria-invalid={field.key === 'birthDate' ? Boolean(personBirthDateError) : undefined}
+                            onChange={(event) => updatePerson({ [field.key]: event.target.value } as Partial<Person>)}
                           />
+                        )}
+                        {field.key === 'birthDate' && personBirthDateError && (
+                          <small className="field-warning" role="alert">{personBirthDateError}</small>
                         )}
                         {field.key === 'portrait' && !isSafePortrait(selectedPerson.portrait) && (
                           <small className="field-warning">Use a repository PNG path or HTTPS PNG URL.</small>
@@ -643,11 +691,22 @@ export function Dashboard(props: DashboardProps) {
                       </select>
                     </label>
                     {selectedPerson.status === 'dead' && (
-                      <label>
+                      <label className="death-date-reveal">
                         Death date
-                        <input type="date" value={selectedPerson.deathDate} onChange={(event) => updatePerson({ deathDate: event.target.value })} />
+                        <input
+                          type="date"
+                          value={selectedPerson.deathDate}
+                          aria-invalid={Boolean(personDeathDateError)}
+                          onChange={(event) => updatePerson({ deathDate: event.target.value })}
+                        />
+                        {personDeathDateError && <small className="field-warning" role="alert">{personDeathDateError}</small>}
                       </label>
                     )}
+                    <label>
+                      Calculated age
+                      <input value={selectedPersonAge} readOnly aria-readonly="true" />
+                      <small>Calculated from birth date and death date (when supplied).</small>
+                    </label>
                     <label>
                       Portrait number
                       <input
@@ -688,16 +747,51 @@ export function Dashboard(props: DashboardProps) {
             <div className="record-editor">
               <aside className="record-list" aria-label="Pets">
                 <div className="record-list-title">
-                  <span>Pets</span>
+                  <label className="bulk-toggle">
+                    <input
+                      type="checkbox"
+                      checked={petSelectionMode}
+                      onChange={(event) => {
+                        setPetSelectionMode(event.target.checked)
+                        if (!event.target.checked) setSelectedPetIds(new Set())
+                      }}
+                    />
+                    <span>Pets</span>
+                  </label>
                   <div className="record-list-title-actions">
                     <small>{data.pets.length}</small>
                     <button className="mini-button" onClick={addNewPet}>Add</button>
                   </div>
                 </div>
+                {petSelectionMode && (
+                  <div className="bulk-actions">
+                    <span>{selectedPetIds.size} selected</span>
+                    <button
+                      className="mini-button danger-mini"
+                      type="button"
+                      disabled={selectedPetIds.size === 0}
+                      onClick={() => beginPetDeletion([...selectedPetIds])}
+                    >
+                      Delete selected
+                    </button>
+                  </div>
+                )}
                 {data.pets.length === 0 && <p className="record-list-empty">No pets published yet.</p>}
                 {data.pets.map((pet) => (
                   <div className={`record-row ${selectedPet?.id === pet.id ? 'active' : ''}`} key={pet.id}>
-                    <button type="button" onClick={() => setSelectedPetId(pet.id)}>
+                    {petSelectionMode && (
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${pet.displayName}`}
+                        checked={selectedPetIds.has(pet.id)}
+                        disabled={pet.protected}
+                        onChange={() => toggleBulkPet(pet.id)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => petSelectionMode ? toggleBulkPet(pet.id) : setSelectedPetId(pet.id)}
+                    >
                       <span>{pet.displayName}</span>
                       <small>{pet.protected ? `${pet.species || '?'} · locked` : pet.species || '?'}</small>
                     </button>
@@ -728,14 +822,18 @@ export function Dashboard(props: DashboardProps) {
                           <input
                             value={String(selectedPet[field.key] ?? '')}
                             placeholder={field.placeholder}
-                            type={field.key === 'ageOverride' ? 'number' : 'text'}
-                            min={field.key === 'ageOverride' ? 0 : undefined}
-                            onChange={(event) => updatePet({
-                              [field.key]: field.key === 'ageOverride'
-                                ? (event.target.value === '' ? null : Number(event.target.value))
-                                : event.target.value,
-                            } as Partial<Pet>)}
+                            type="text"
+                            aria-invalid={field.key === 'birthDate' ? Boolean(petBirthDateError) : undefined}
+                            onChange={(event) => updatePet({ [field.key]: event.target.value } as Partial<Pet>)}
+                            onBlur={() => {
+                              if (field.key === 'birthDate' && selectedPet.birthDate.trim()) {
+                                updatePet({ birthDate: normalizeArchiveDate(selectedPet.birthDate, true) })
+                              }
+                            }}
                           />
+                        )}
+                        {field.key === 'birthDate' && petBirthDateError && (
+                          <small className="field-warning" role="alert">{petBirthDateError}</small>
                         )}
                         {field.key === 'portrait' && !isSafePortrait(selectedPet.portrait) && (
                           <small className="field-warning">Use a repository PNG path or HTTPS PNG URL.</small>
@@ -767,11 +865,28 @@ export function Dashboard(props: DashboardProps) {
                       </select>
                     </label>
                     {selectedPet.status === 'dead' && (
-                      <label>
+                      <label className="death-date-reveal">
                         Death date
-                        <input type="date" value={selectedPet.deathDate} onChange={(event) => updatePet({ deathDate: event.target.value })} />
+                        <input
+                          type="text"
+                          value={selectedPet.deathDate}
+                          placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
+                          aria-invalid={Boolean(petDeathDateError)}
+                          onChange={(event) => updatePet({ deathDate: event.target.value })}
+                          onBlur={() => {
+                            if (selectedPet.deathDate.trim()) {
+                              updatePet({ deathDate: normalizeArchiveDate(selectedPet.deathDate, true) })
+                            }
+                          }}
+                        />
+                        {petDeathDateError && <small className="field-warning" role="alert">{petDeathDateError}</small>}
                       </label>
                     )}
+                    <label>
+                      Calculated age
+                      <input value={selectedPetAge} readOnly aria-readonly="true" />
+                      <small>Calculated from the accepted birth-date precision.</small>
+                    </label>
                     <label>
                       Human owner
                       <select value={selectedPet.ownerPersonId} onChange={(event) => updatePet({ ownerPersonId: event.target.value })}>
@@ -904,6 +1019,26 @@ export function Dashboard(props: DashboardProps) {
             <div className="modal-actions">
               <button className="danger-button" type="button" onClick={confirmPersonDeletion}>Delete permanently</button>
               <button className="ghost-button" type="button" onClick={() => setPendingDelete(null)}>Cancel</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {pendingPetDelete && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingPetDelete(null)}>
+          <section className="dashboard-modal celestial-panel delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="pet-delete-title" onMouseDown={(event) => event.stopPropagation()}>
+            <p className="section-kicker">Permanent draft change</p>
+            <h2 id="pet-delete-title">Delete {pendingPetDelete.deleteIds.length} {pendingPetDelete.deleteIds.length === 1 ? 'pet' : 'pets'}?</h2>
+            <p>
+              Selected: {pendingPetDelete.requestedIds.map((id) => data.pets.find((pet) => pet.id === id)?.displayName ?? id).join(', ')}
+            </p>
+            {pendingPetDelete.cascadeIds.length > 0 && (
+              <p className="cascade-warning">
+                This also removes the offspring branch: {pendingPetDelete.cascadeIds.map((id) => data.pets.find((pet) => pet.id === id)?.displayName ?? id).join(', ')}
+              </p>
+            )}
+            <div className="modal-actions">
+              <button className="danger-button" type="button" onClick={confirmPetDeletion}>Delete permanently</button>
+              <button className="ghost-button" type="button" onClick={() => setPendingPetDelete(null)}>Cancel</button>
             </div>
           </section>
         </div>

@@ -11,12 +11,14 @@ import {
 import {
   bornValue,
   calculateAge,
+  dateSortKey,
   displayValue,
   isSafeExternalUrl,
   portraitCandidates,
   sortChildren,
   yearFromDate,
 } from '../lib/data'
+import { useCurrentDate } from '../hooks/useCurrentDate'
 import type { FamilyUnit, Person, Pet, PetFamilyUnit } from '../types'
 
 type Entity = Person | Pet
@@ -219,8 +221,8 @@ function buildPetYearBands(pets: Pet[]): PetYearBand[] {
       year,
       pets: entries
         .sort((left, right) => {
-          const leftKey = /^\d{4}-\d{2}-\d{2}$/.test(left.pet.birthDate) ? left.pet.birthDate : `${year ?? 9999}-00-00`
-          const rightKey = /^\d{4}-\d{2}-\d{2}$/.test(right.pet.birthDate) ? right.pet.birthDate : `${year ?? 9999}-00-00`
+          const leftKey = dateSortKey(left.pet.birthDate)
+          const rightKey = dateSortKey(right.pet.birthDate)
           return leftKey.localeCompare(rightKey) || left.index - right.index
         })
         .map(({ pet }) => pet),
@@ -327,14 +329,14 @@ function EntityCard({
   )
 }
 
-function DetailPopover({ tooltip, people, onClose }: { tooltip: TooltipState; people: Person[]; onClose: () => void }) {
+function DetailPopover({ tooltip, people, today, onClose }: { tooltip: TooltipState; people: Person[]; today: Date; onClose: () => void }) {
   const { entity, pinned } = tooltip
   const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
   const left = Math.min(window.innerWidth - 254, Math.max(16, tooltip.x + 18))
   const top = Math.min(window.innerHeight - 300, Math.max(82, tooltip.y + 18))
   const style = pinned ? undefined : ({ left, top } as CSSProperties)
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
-  const age = calculateAge(entity.birthDate, entity.ageOverride, new Date(), entity.deathDate, entity.status, isPet(entity))
+  const age = calculateAge(entity.birthDate, today, entity.deathDate, entity.status, isPet(entity))
   const diedRows = entity.status === 'dead' ? [['Died', displayValue(entity.deathDate)]] : []
   const rows = isPet(entity)
     ? [
@@ -507,6 +509,7 @@ function PetYearTimeline({
 }
 
 export function LineageGraph({ mode, people, families, pets, petFamilies }: LineageGraphProps) {
+  const currentDate = useCurrentDate()
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const activePointers = useRef(new Map<number, { x: number; y: number }>())
@@ -856,7 +859,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
         </div>
       </div>
       <p className="graph-help">Hover for details · Select a portrait to open its story when a link exists</p>
-      {tooltip && <DetailPopover tooltip={tooltip} people={people} onClose={() => setTooltip(null)} />}
+      {tooltip && <DetailPopover tooltip={tooltip} people={people} today={currentDate} onClose={() => setTooltip(null)} />}
     </section>
   )
 }

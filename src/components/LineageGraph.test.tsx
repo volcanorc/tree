@@ -177,7 +177,7 @@ describe('LineageGraph details and portraits', () => {
     const iring = screen.getByRole('button', { name: /Iring Brown details/i })
     fireEvent.pointerEnter(iring, { pointerType: 'mouse', clientX: 100, clientY: 100 })
     const dialog = screen.getByRole('dialog', { name: /Iring Brown details/i })
-    expect(dialog).toHaveTextContent('Age11')
+    expect(dialog).toHaveTextContent(`Age${new Date().getFullYear() - 2013}`)
     expect(dialog).toHaveTextContent('Born2013')
     expect(dialog).toHaveTextContent('Died?')
     expect(dialog).toHaveTextContent('StatusDead')

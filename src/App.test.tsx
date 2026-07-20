@@ -22,6 +22,9 @@ describe('App draft recovery', () => {
     mockPublishedData()
     const legacy = structuredClone(seed) as unknown as Record<string, unknown>
     legacy.version = 2
+    const legacySite = legacy.site as Record<string, unknown>
+    legacySite.adminUser = 'outdated-admin'
+    legacySite.adminPinHash = 'outdated-pin-hash'
     const people = legacy.people as Array<Record<string, unknown>>
     people.forEach((person) => {
       person.link = person.id === 'father' ? 'https://example.com/father' : ''
@@ -40,9 +43,11 @@ describe('App draft recovery', () => {
     expect(await screen.findByRole('heading', { name: 'The Family Archive' })).toBeInTheDocument()
     expect(screen.getByText('Local draft active')).toBeInTheDocument()
     const stored = JSON.parse(localStorage.getItem(DRAFT_KEY)!)
-    expect(stored.version).toBe(4)
+    expect(stored.version).toBe(5)
     expect(stored.people[0].deathDate).toBe('')
     expect(stored.people[0].links).toEqual(['https://example.com/father'])
+    expect(stored.site.adminUser).toBe(seed.site.adminUser)
+    expect(stored.site.adminPinHash).toBe(seed.site.adminPinHash)
     expect(stored.pets[0]).toEqual(expect.objectContaining({
       portraitNumber: 1,
       portrait: 'portraits/pets/1.png',
@@ -50,12 +55,13 @@ describe('App draft recovery', () => {
     }))
   })
 
-  it('discards an invalid draft and uses published version-4 data', async () => {
+  it('discards an invalid draft and uses published version-5 data with the revised family heading', async () => {
     mockPublishedData()
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 99 }))
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Family Archive' })).toBeInTheDocument()
     await waitFor(() => expect(localStorage.getItem(DRAFT_KEY)).toBeNull())
     expect(screen.queryByText('Local draft active')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Hermoso - Sullano' })).toBeInTheDocument()
   })
 })
