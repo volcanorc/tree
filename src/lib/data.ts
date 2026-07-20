@@ -17,6 +17,8 @@ import type {
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:'])
 const CORE_PERSON_IDS = ['father', 'mother', 'child-1', 'child-2', 'child-3', 'child-4', 'child-5', 'child-6', 'child-7']
 const LIFE_STATUSES = new Set<LifeStatus>(['alive', 'dead'])
+const DEFAULT_TITLE = 'The Lineage Archive'
+const OLD_DEFAULT_TITLE = 'The Family Archive'
 const DEFAULT_SUBTITLE = 'A lasting record of the people and stories behind every generation.'
 const OLD_DEFAULT_SUBTITLE = 'A living record of the people, stories, and connections that shaped us.'
 const PORTRAIT_ORDER = [
@@ -155,6 +157,15 @@ function formatParsedArchiveDate(parsed: ParsedArchiveDate, monthStyle: 'short' 
   return `${year}-${month}-${parsed.day}`
 }
 
+function formatPublicArchiveDate(parsed: ParsedArchiveDate): string {
+  const year = String(parsed.year).padStart(4, '0')
+  if (parsed.precision === 'year') return year
+  const fullMonth = MONTH_FULL_NAMES[parsed.month - 1]
+  const month = `${fullMonth[0].toUpperCase()}${fullMonth.slice(1)}`
+  if (parsed.precision === 'month') return `${month} ${year}`
+  return `${month} ${parsed.day} ${year}`
+}
+
 export function parseArchiveDate(value: string, allowPartial = false): ParsedArchiveDate | null {
   const parts = value.trim().toLowerCase().split('-')
   const validYear = /^\d{4}$/.test(parts[0]) || (allowPartial && /^\d{2}$/.test(parts[0]))
@@ -192,7 +203,7 @@ export function normalizeArchiveDate(value: string, allowPartial = false): strin
 export function displayArchiveDate(value: string): string {
   if (!value.trim()) return '?'
   const parsed = parseArchiveDate(value, true)
-  return parsed ? formatParsedArchiveDate(parsed, 'long') : value.trim()
+  return parsed ? formatPublicArchiveDate(parsed) : value.trim()
 }
 
 function compareDateParts(left: ParsedArchiveDate, right: ParsedArchiveDate): number {
@@ -270,9 +281,18 @@ export function petPortraitPath(portraitNumber: number): string {
   return `portraits/pets/${portraitNumber}.png`
 }
 
+export function portraitNumberFromPath(value: string, kind: 'person' | 'pet'): number | null {
+  const pattern = kind === 'person'
+    ? /^\/?portraits\/([1-9]\d*)\.png$/
+    : /^\/?portraits\/pets\/([1-9]\d*)\.png$/
+  const match = value.trim().match(pattern)
+  if (!match) return null
+  const portraitNumber = Number(match[1])
+  return Number.isSafeInteger(portraitNumber) ? portraitNumber : null
+}
+
 export function isAutomaticPortraitPath(value: string, kind: 'person' | 'pet', portraitNumber: number): boolean {
-  const expected = kind === 'person' ? personPortraitPath(portraitNumber) : petPortraitPath(portraitNumber)
-  return value.replace(/^\//, '') === expected
+  return portraitNumberFromPath(value, kind) === portraitNumber
 }
 
 export function portraitCandidates(entity: Pick<Person | Pet, 'portrait' | 'portraitNumber'>): string[] {
@@ -493,11 +513,12 @@ export function migrateTreeData(input: unknown): TreeData {
     if (raw.version === 1 || raw.version === 2) existingIring.protected = true
   } else pets.unshift(iringBrown())
   const site = raw.site ?? ({} as TreeData['site'])
+  const title = stringValue(site.title)
   const subtitle = stringValue(site.subtitle)
   return {
     version: 5,
     site: {
-      title: stringValue(site.title),
+      title: !title.trim() || title.trim() === OLD_DEFAULT_TITLE ? DEFAULT_TITLE : title,
       subtitle: !subtitle || subtitle === OLD_DEFAULT_SUBTITLE ? DEFAULT_SUBTITLE : subtitle,
       theme: 'celestial-lineage',
       adminUser: stringValue(site.adminUser),
@@ -736,11 +757,31 @@ export function addPartner(data: TreeData, personId: string, label = 'New partne
   return { ...data, people: [...data.people, partner], families }
 }
 
-export function addPetOffspring(data: TreeData, parentPetId: string, label = 'New pet'): TreeData {
+export function addSibling(data: TreeData, personId: string, label = 'New sibling'): TreeData {
+  const familyIndex = data.families.findIndex((family) => family.children.some((child) => child.personId === personId))
+  if (familyIndex < 0) return data
+  const id = makeId(label, data.people.map((person) => person.id))
+  const person = createBlankPerson(id, label, nextPortraitNumber(data))
+  const families = data.families.map((family, index) => {
+    if (index !== familyIndex) return family
+    const nextOrder = Math.max(0, ...family.children.map((child) => child.birthOrder)) + 1
+    return { ...family, children: [...family.children, { personId: id, birthOrder: nextOrder }] }
+  })
+  return { ...data, people: [...data.people, person], families }
+}
+
+export function addPetOffspring(data: TreeData, parentPetId: string, label = 'New pet', familyId?: string | 'single'): TreeData {
   const id = makeId(label, data.pets.map((pet) => pet.id))
   const pet = createBlankPet(id, label, nextPetPortraitNumber(data))
-  const familyIndex = data.petFamilies.findIndex((family) => family.parentPetIds.includes(parentPetId))
   const petFamilies = data.petFamilies.map((family) => ({ ...family, children: [...family.children] }))
+  let familyIndex = familyId && familyId !== 'single'
+    ? petFamilies.findIndex((family) => family.id === familyId && family.parentPetIds.includes(parentPetId))
+    : -1
+  if (familyId === 'single') familyIndex = petFamilies.findIndex((family) => family.parentPetIds.length === 1 && family.parentPetIds[0] === parentPetId)
+  if (!familyId) {
+    const applicable = petFamilies.map((family, index) => ({ family, index })).filter(({ family }) => family.parentPetIds.includes(parentPetId))
+    if (applicable.length === 1) familyIndex = applicable[0].index
+  }
   if (familyIndex >= 0) {
     const nextOrder = Math.max(0, ...petFamilies[familyIndex].children.map((child) => child.birthOrder)) + 1
     petFamilies[familyIndex].children.push({ petId: id, birthOrder: nextOrder })
@@ -750,15 +791,36 @@ export function addPetOffspring(data: TreeData, parentPetId: string, label = 'Ne
   return { ...data, pets: [...data.pets, pet], petFamilies }
 }
 
-export function addPetPartner(data: TreeData, petId: string, label = 'New pet partner'): TreeData {
-  const current = data.petFamilies.find((family) => family.parentPetIds.includes(petId))
-  if (current?.parentPetIds.length === 2) return data
+export function addPetPartner(data: TreeData, petId: string, label = 'New pet partner', attachFamilyId?: string): TreeData {
   const id = makeId(label, data.pets.map((pet) => pet.id))
   const partner = createBlankPet(id, label, nextPetPortraitNumber(data))
-  const petFamilies = current
-    ? data.petFamilies.map((family) => family.id === current.id ? { ...family, parentPetIds: [...family.parentPetIds, id] } : family)
-    : [...data.petFamilies, { id: makeId(`pet-family-${petId}`, data.petFamilies.map((family) => family.id)), parentPetIds: [petId, id], children: [] }]
+  let attached = false
+  const petFamilies = data.petFamilies.map((family) => {
+    if (family.id !== attachFamilyId || family.parentPetIds.length !== 1 || !family.parentPetIds.includes(petId)) return family
+    attached = true
+    return { ...family, parentPetIds: [...family.parentPetIds, id] }
+  })
+  if (!attached) {
+    petFamilies.push({
+      id: makeId(`pet-family-${petId}`, petFamilies.map((family) => family.id)),
+      parentPetIds: [petId, id],
+      children: [],
+    })
+  }
   return { ...data, pets: [...data.pets, partner], petFamilies }
+}
+
+export function addPetSibling(data: TreeData, petId: string, label = 'New pet sibling'): TreeData {
+  const familyIndex = data.petFamilies.findIndex((family) => family.children.some((child) => child.petId === petId))
+  if (familyIndex < 0) return data
+  const id = makeId(label, data.pets.map((pet) => pet.id))
+  const pet = createBlankPet(id, label, nextPetPortraitNumber(data))
+  const petFamilies = data.petFamilies.map((family, index) => {
+    if (index !== familyIndex) return family
+    const nextOrder = Math.max(0, ...family.children.map((child) => child.birthOrder)) + 1
+    return { ...family, children: [...family.children, { petId: id, birthOrder: nextOrder }] }
+  })
+  return { ...data, pets: [...data.pets, pet], petFamilies }
 }
 
 export function planPersonDeletion(data: TreeData, requestedIds: string[]): PersonDeletePlan {
@@ -803,7 +865,12 @@ export function applyPersonDeletePlan(data: TreeData, plan: PersonDeletePlan): T
     if (removedParent && children.length === 0) return []
     return [{ ...family, parentIds, children }]
   })
-  return { ...data, people: data.people.filter((person) => !deleteSet.has(person.id)), families }
+  return {
+    ...data,
+    people: data.people.filter((person) => !deleteSet.has(person.id)),
+    families,
+    pets: data.pets.map((pet) => deleteSet.has(pet.ownerPersonId) ? { ...pet, ownerPersonId: '' } : pet),
+  }
 }
 
 export function deletePerson(data: TreeData, personId: string): DeleteResult {

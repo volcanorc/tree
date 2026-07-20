@@ -6,22 +6,26 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  type ReactNode,
 } from 'react'
 import {
   bornValue,
   calculateAge,
+  dateFieldError,
   dateSortKey,
   displayArchiveDate,
   displayValue,
   isSafeExternalUrl,
+  normalizeArchiveDate,
   portraitCandidates,
   sortChildren,
   yearFromDate,
 } from '../lib/data'
 import { useCurrentDate } from '../hooks/useCurrentDate'
-import type { FamilyUnit, Person, Pet, PetFamilyUnit } from '../types'
+import type { ArchiveEditIntent, ArchiveEntityPatch, FamilyUnit, Gender, LifeStatus, Person, Pet, PetFamilyUnit } from '../types'
 
 type Entity = Person | Pet
 type ViewState = { x: number; y: number; scale: number }
@@ -63,13 +67,28 @@ interface PetSpeciesColumn {
   width: number
 }
 
+export interface LineageFocusRequest {
+  entityId: string
+  requestId: number
+}
+
 interface LineageGraphProps {
   mode: 'people' | 'pets'
   people: Person[]
   families: FamilyUnit[]
   pets: Pet[]
   petFamilies: PetFamilyUnit[]
+  onOwnerNavigate?: (personId: string) => void
+  onPetNavigate?: (petId: string) => void
+  focusRequest?: LineageFocusRequest | null
+  onFocusAcknowledge?: (requestId: number) => void
+  canEdit?: boolean
+  onEditAction?: (intent: ArchiveEditIntent) => void
+  onEntityPatch?: (request: ArchiveEntityPatch) => string
+  recentEntityId?: string | null
 }
+
+type HighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female'
 
 interface HoverState {
   entity: Entity
@@ -93,6 +112,18 @@ const MAX_SCALE = 2.5
 
 function clampScale(value: number) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value))
+}
+
+function elementCenterInAncestor(element: HTMLElement, ancestor: HTMLElement) {
+  let x = element.offsetLeft + element.offsetWidth / 2
+  let y = element.offsetTop + element.offsetHeight / 2
+  let parent = element.offsetParent as HTMLElement | null
+  while (parent && parent !== ancestor) {
+    x += parent.offsetLeft
+    y += parent.offsetTop
+    parent = parent.offsetParent as HTMLElement | null
+  }
+  return { x, y }
 }
 
 function isPet(entity: Entity): entity is Pet {
@@ -286,6 +317,8 @@ function EntityCard({
   owner,
   layoutSlot,
   pinnedEntityId,
+  focusedEntityId,
+  recentEntityId,
   onHover,
   onLeave,
   onActivate,
@@ -294,6 +327,8 @@ function EntityCard({
   owner?: Person
   layoutSlot?: number
   pinnedEntityId: string | null
+  focusedEntityId: string | null
+  recentEntityId?: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onActivate: (entity: Entity) => void
@@ -305,11 +340,13 @@ function EntityCard({
   }
   return (
     <button
-      className={`entity-card ${isPet(entity) ? 'pet-card' : ''}`}
+      className={`entity-card ${isPet(entity) ? 'pet-card ' : ''}${focusedEntityId === entity.id ? 'is-owner-target ' : ''}${pinnedEntityId === entity.id ? 'is-active ' : ''}${recentEntityId === entity.id ? 'is-newly-created' : ''}`}
       type="button"
       data-entity-id={entity.id}
+      data-status={entity.status}
+      data-gender={entity.gender}
       data-layout-slot={layoutSlot}
-      aria-label={`${displayValue(entity.displayName)} details${safeLinks.length > 0 ? `, ${safeLinks.length} profile ${safeLinks.length === 1 ? 'link' : 'links'} available` : ''}`}
+      aria-label={`${displayValue(entity.displayName)} details${safeLinks.length > 0 ? `, ${safeLinks.length} profile ${safeLinks.length === 1 ? 'link' : 'links'} available` : ''}${focusedEntityId === entity.id ? ', navigation target' : ''}`}
       aria-expanded={pinnedEntityId === entity.id}
       onPointerEnter={(event) => onHover(entity, event.clientX, event.clientY)}
       onPointerMove={(event) => {
@@ -336,23 +373,76 @@ function EntityCard({
   )
 }
 
+type QuickEditField =
+  | 'displayName'
+  | 'nickname'
+  | 'birthDate'
+  | 'deathDate'
+  | 'gender'
+  | 'status'
+  | 'personality'
+  | 'biography'
+  | 'species'
+  | 'breed'
+  | 'ownerPersonId'
+
+interface QuickEditState {
+  field: QuickEditField
+  value: string
+  error: string
+}
+
+interface DetailRow {
+  label: string
+  value: ReactNode
+  field?: QuickEditField
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 20h4.2L19 9.2 14.8 5 4 15.8V20Zm12-13.8 1.8-1.8a1.4 1.4 0 0 1 2 0l.8.8a1.4 1.4 0 0 1 0 2L18.8 9 16 6.2Z" />
+    </svg>
+  )
+}
+
 function DetailPopover({
   entity,
   people,
+  pets,
   today,
   hover,
   pinnedPosition,
   popoverRef,
+  onClose,
+  onOwnerNavigate,
+  onPetNavigate,
+  canEdit = false,
+  hasRecordedParents = false,
+  onEditAction,
+  onEntityPatch,
 }: {
   entity: Entity
   people: Person[]
+  pets: Pet[]
   today: Date
   hover?: HoverState
   pinnedPosition?: PinnedPosition | null
   popoverRef?: RefObject<HTMLElement | null>
+  onClose?: () => void
+  onOwnerNavigate?: (personId: string) => void
+  onPetNavigate?: (petId: string) => void
+  canEdit?: boolean
+  hasRecordedParents?: boolean
+  onEditAction?: (intent: ArchiveEditIntent) => void
+  onEntityPatch?: (request: ArchiveEntityPatch) => string
 }) {
   const pinned = !hover
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editing, setEditing] = useState<QuickEditState | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
+  const ownedPets = isPet(entity) ? [] : pets.filter((pet) => pet.ownerPersonId === entity.id)
   const left = hover ? Math.min(window.innerWidth - 254, Math.max(16, hover.x + 18)) : pinnedPosition?.left ?? 0
   const top = hover ? Math.min(window.innerHeight - 300, Math.max(82, hover.y + 18)) : pinnedPosition?.top ?? 0
   const style = pinned
@@ -365,51 +455,315 @@ function DetailPopover({
     : ({ left, top } as CSSProperties)
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
   const age = calculateAge(entity.birthDate, today, entity.deathDate, entity.status, isPet(entity))
-  const diedRows = entity.status === 'dead' ? [['Died', displayArchiveDate(entity.deathDate)]] : []
-  const rows = isPet(entity)
+  const editable = pinned && canEdit && Boolean(onEntityPatch)
+
+  function currentFieldValue(field: QuickEditField): string {
+    if (field === 'ownerPersonId') return isPet(entity) ? entity.ownerPersonId : ''
+    if (field === 'species' || field === 'breed') return isPet(entity) ? entity[field] : ''
+    if (field === 'nickname') return isPet(entity) ? '' : entity.nickname
+    return String(entity[field as keyof Entity] ?? '')
+  }
+
+  function commitValue(field: QuickEditField, rawValue: string): boolean {
+    if (!onEntityPatch) return false
+    let value = rawValue
+    if (field === 'displayName') {
+      value = rawValue.trim()
+      if (!value) {
+        setEditing({ field, value: rawValue, error: 'Name is required.' })
+        return false
+      }
+    }
+    if (field === 'birthDate' || field === 'deathDate') {
+      const error = dateFieldError(rawValue, isPet(entity), today)
+      if (error) {
+        setEditing({ field, value: rawValue, error })
+        return false
+      }
+      value = normalizeArchiveDate(rawValue, isPet(entity))
+    }
+
+    let error: string
+    if (isPet(entity)) {
+      const patch: Partial<Pet> = {}
+      if (field === 'displayName') patch.displayName = value
+      else if (field === 'birthDate') patch.birthDate = value
+      else if (field === 'deathDate') patch.deathDate = value
+      else if (field === 'gender') patch.gender = value as Gender
+      else if (field === 'status') patch.status = value as LifeStatus
+      else if (field === 'personality') patch.personality = value
+      else if (field === 'biography') patch.biography = value
+      else if (field === 'species') patch.species = value
+      else if (field === 'breed') patch.breed = value
+      else if (field === 'ownerPersonId') patch.ownerPersonId = value
+      error = onEntityPatch({ kind: 'pet', entityId: entity.id, patch })
+    } else {
+      const patch: Partial<Person> = {}
+      if (field === 'displayName') patch.displayName = value
+      else if (field === 'nickname') patch.nickname = value
+      else if (field === 'birthDate') patch.birthDate = value
+      else if (field === 'deathDate') patch.deathDate = value
+      else if (field === 'gender') patch.gender = value as Gender
+      else if (field === 'status') patch.status = value as LifeStatus
+      else if (field === 'personality') patch.personality = value
+      else if (field === 'biography') patch.biography = value
+      error = onEntityPatch({ kind: 'person', entityId: entity.id, patch })
+    }
+    if (error) {
+      setEditing({ field, value: rawValue, error })
+      return false
+    }
+    setEditing(null)
+    return true
+  }
+
+  function beginEdit(field: QuickEditField) {
+    if (!editable) return
+    if (editing && editing.field !== field && !commitValue(editing.field, editing.value)) return
+    setEditing({ field, value: currentFieldValue(field), error: '' })
+  }
+
+  function editorFor(field: QuickEditField) {
+    if (!editing || editing.field !== field) return null
+    const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setEditing(null)
+      } else if (event.key === 'Enter') {
+        event.preventDefault()
+        commitValue(field, editing.value)
+      }
+    }
+    const shared = {
+      autoFocus: true,
+      value: editing.value,
+      'aria-label': `Edit ${field}`,
+      'aria-invalid': Boolean(editing.error),
+      onBlur: () => commitValue(field, editing.value),
+      onKeyDown: handleKeyDown,
+    }
+    let control: ReactNode
+    if (field === 'gender') {
+      control = (
+        <select {...shared} onChange={(event) => commitValue(field, event.target.value)}>
+          <option value="unknown">Unknown</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="nonbinary">Nonbinary</option>
+          <option value="prefer-not-to-say">Prefer not to say</option>
+        </select>
+      )
+    } else if (field === 'status') {
+      control = (
+        <select {...shared} onChange={(event) => commitValue(field, event.target.value)}>
+          <option value="alive">Alive</option>
+          <option value="dead">Dead</option>
+        </select>
+      )
+    } else if (field === 'ownerPersonId') {
+      control = (
+        <select {...shared} onChange={(event) => commitValue(field, event.target.value)}>
+          <option value="">No owner</option>
+          {people.map((person) => <option value={person.id} key={person.id}>{person.displayName}</option>)}
+        </select>
+      )
+    } else if (field === 'biography') {
+      control = <textarea {...shared} rows={3} onChange={(event) => setEditing({ field, value: event.target.value, error: '' })} />
+    } else {
+      const isDate = field === 'birthDate' || field === 'deathDate'
+      control = (
+        <input
+          {...shared}
+          type={isDate && !isPet(entity) ? 'date' : 'text'}
+          placeholder={isDate && isPet(entity) ? 'Year, year-month, or year-month-day' : undefined}
+          onChange={(event) => setEditing({ field, value: event.target.value, error: '' })}
+        />
+      )
+    }
+    return (
+      <span className="quick-edit-control">
+        {control}
+        {editing.error && <span className="quick-edit-error" role="alert">{editing.error}</span>}
+      </span>
+    )
+  }
+
+  function editableValue(value: ReactNode, field?: QuickEditField) {
+    if (!field || !editable) return value
+    if (editing?.field === field) return editorFor(field)
+    return (
+      <span className="quick-edit-value">
+        <span>{value}</span>
+        <button className="quick-edit-pencil" type="button" onClick={() => beginEdit(field)} aria-label={`Edit ${field}`} title={`Edit ${field}`}>
+          <PencilIcon />
+        </button>
+      </span>
+    )
+  }
+
+  const diedRows: DetailRow[] = entity.status === 'dead'
+    ? [{ label: 'Died', value: displayArchiveDate(entity.deathDate), field: 'deathDate' }]
+    : []
+  useEffect(() => {
+    if (!menuOpen) return
+    const closeOnPointer = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [menuOpen])
+  const rows: DetailRow[] = isPet(entity)
     ? [
-        ['Species', displayValue(entity.species)],
-        ['Breed', displayValue(entity.breed)],
-        ['Age', age],
-        ['Born', bornValue(entity)],
+        { label: 'Species', value: displayValue(entity.species), field: 'species' },
+        { label: 'Breed', value: displayValue(entity.breed), field: 'breed' },
+        { label: 'Age', value: age, field: 'birthDate' },
+        { label: 'Born', value: bornValue(entity) },
         ...diedRows,
-        ['Gender', displayValue(entity.gender)],
-        ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
-        ['Owner', displayValue(owner?.displayName)],
-        ['Personality', displayValue(entity.personality)],
+        { label: 'Gender', value: displayValue(entity.gender), field: 'gender' },
+        { label: 'Status', value: entity.status === 'dead' ? 'Dead' : 'Alive', field: 'status' },
+        {
+          label: 'Owner',
+          field: 'ownerPersonId',
+          value: owner && pinned && onOwnerNavigate
+            ? (
+                <button
+                  className="owner-navigation-button"
+                  type="button"
+                  onClick={() => onOwnerNavigate(owner.id)}
+                  aria-label={`View ${owner.displayName} in family tree`}
+                >
+                  {owner.displayName}
+                </button>
+              )
+            : displayValue(owner?.displayName),
+        },
+        { label: 'Personality', value: displayValue(entity.personality), field: 'personality' },
       ]
     : [
-        ['Age', age],
-        ['Born', bornValue(entity)],
+        { label: 'Age', value: age, field: 'birthDate' },
+        { label: 'Born', value: bornValue(entity) },
         ...diedRows,
-        ['Gender', displayValue(entity.gender)],
-        ['Status', entity.status === 'dead' ? 'Dead' : 'Alive'],
-        ['Personality', displayValue(entity.personality)],
+        { label: 'Gender', value: displayValue(entity.gender), field: 'gender' },
+        { label: 'Status', value: entity.status === 'dead' ? 'Dead' : 'Alive', field: 'status' },
+        ...(ownedPets.length > 0
+          ? [{
+              label: 'Owned pets',
+              value: pinned && onPetNavigate
+                ? (
+                    <span className="related-navigation-list">
+                      {ownedPets.map((pet) => (
+                        <button
+                          className="owner-navigation-button"
+                          type="button"
+                          key={pet.id}
+                          onClick={() => onPetNavigate(pet.id)}
+                          aria-label={`View ${pet.displayName} in pet lineage`}
+                        >
+                          {pet.displayName}
+                        </button>
+                      ))}
+                    </span>
+                  )
+                : ownedPets.map((pet) => pet.displayName).join(', '),
+            }]
+          : []),
+        { label: 'Personality', value: displayValue(entity.personality), field: 'personality' },
       ]
 
   return (
     <aside
-      className={`detail-popover ${pinned ? `detail-pinned is-${pinnedPosition?.placement ?? 'above'}` : 'detail-hover'}`}
+      className={`detail-popover ${pinned ? `detail-pinned is-${pinnedPosition?.placement ?? 'above'}${canEdit ? ' has-admin-controls' : ''}` : 'detail-hover'}`}
       style={style}
       role={pinned ? 'dialog' : 'tooltip'}
       aria-label={`${entity.displayName} details`}
       ref={popoverRef}
     >
-      <span className="portrait-number" aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>
+      <span className={`portrait-number ${pinned && canEdit ? 'is-admin-position' : ''}`} aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>
+      {pinned && canEdit && onEditAction && (
+        <div className="profile-menu" ref={menuRef}>
+          <button
+            className="profile-menu-trigger"
+            type="button"
+            aria-label="Profile actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((current) => !current)}
+          >
+            ▾
+          </button>
+          {menuOpen && (
+            <div className="profile-menu-panel" role="menu" aria-label="Profile actions menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onEditAction({ kind: isPet(entity) ? 'pet' : 'person', entityId: entity.id, action: 'settings' })
+                }}
+              >
+                Settings
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="profile-menu-delete"
+                disabled={entity.protected}
+                title={entity.protected ? 'Protected record' : undefined}
+                aria-label={entity.protected ? 'Delete — protected record' : 'Delete'}
+                onClick={() => {
+                  setMenuOpen(false)
+                  onEditAction({ kind: isPet(entity) ? 'pet' : 'person', entityId: entity.id, action: 'delete' })
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       <span className="popover-kicker">{displayValue(entity.relationshipLabel)}</span>
-      <h3>{displayValue(entity.displayName)}</h3>
-      {!isPet(entity) && entity.nickname && <p className="nickname">“{entity.nickname}”</p>}
+      <h3>{editableValue(displayValue(entity.displayName), 'displayName')}</h3>
+      {!isPet(entity) && entity.nickname && <p className="nickname">“{editableValue(entity.nickname, 'nickname')}”</p>}
       <dl>
-        {rows.map(([label, value]) => (
-          <div key={String(label)}><dt>{label}</dt><dd>{String(value)}</dd></div>
+        {rows.map(({ label, value, field }) => (
+          <div key={label}><dt>{label}</dt><dd>{editableValue(value, field)}</dd></div>
         ))}
       </dl>
-      {entity.biography && <p className="popover-bio">{entity.biography}</p>}
-      {pinned && safeLinks.length > 0 && (
-        <div className="story-links" aria-label="Profile links">
-          {safeLinks.map((link, index) => (
-            <a className="story-link" href={link} target="_blank" rel="noopener noreferrer" key={`${link}-${index}`}>Visit {index + 1}</a>
-          ))}
+      {entity.biography && <p className="popover-bio">{editableValue(entity.biography, 'biography')}</p>}
+      {pinned && (
+        <div className="popover-actions">
+          {safeLinks.length > 0 && (
+            <div className="story-links" aria-label="Profile links">
+              {safeLinks.map((link, index) => (
+                <a className="story-link" href={link} target="_blank" rel="noopener noreferrer" key={`${link}-${index}`}>Visit {index + 1}</a>
+              ))}
+            </div>
+          )}
+          {canEdit && onEditAction && (
+            <div className="popover-edit-actions" aria-label="Archive editing actions">
+              <button type="button" onClick={() => onEditAction({ kind: isPet(entity) ? 'pet' : 'person', entityId: entity.id, action: 'child' })}>
+                {isPet(entity) ? '+ Offspring' : '+ Child'}
+              </button>
+              <button type="button" onClick={() => onEditAction({ kind: isPet(entity) ? 'pet' : 'person', entityId: entity.id, action: 'partner' })}>+ Partner</button>
+              <button
+                type="button"
+                disabled={!hasRecordedParents}
+                title={hasRecordedParents ? undefined : 'No recorded parents'}
+                aria-label={hasRecordedParents ? '+ Sibling' : '+ Sibling — no recorded parents'}
+                onClick={() => onEditAction({ kind: isPet(entity) ? 'pet' : 'person', entityId: entity.id, action: 'sibling' })}
+              >
+                + Sibling
+              </button>
+            </div>
+          )}
+          <button className="popover-close" type="button" onClick={onClose} aria-label="Close profile details">Close</button>
         </div>
       )}
     </aside>
@@ -423,6 +777,8 @@ function LineageBranch({
   people,
   path,
   pinnedEntityId,
+  focusedEntityId,
+  recentEntityId,
   onHover,
   onLeave,
   onActivate,
@@ -433,6 +789,8 @@ function LineageBranch({
   people: Person[]
   path: Set<string>
   pinnedEntityId: string | null
+  focusedEntityId: string | null
+  recentEntityId?: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onActivate: (entity: Entity) => void
@@ -445,7 +803,7 @@ function LineageBranch({
     return (
       <div className="lineage-branch">
         <div className="partner-group-row">
-          <EntityCard entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+          <EntityCard entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         </div>
       </div>
     )
@@ -468,7 +826,7 @@ function LineageBranch({
           const groupEntity = entities.get(groupEntityId)
           if (!groupEntity) return null
           const owner = isPet(groupEntity) ? people.find((person) => person.id === groupEntity.ownerPersonId) : undefined
-          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         })}
       </div>
       {group.families.length > 0 && (
@@ -487,6 +845,8 @@ function LineageBranch({
                       people={people}
                       path={nextPath}
                       pinnedEntityId={pinnedEntityId}
+                      focusedEntityId={focusedEntityId}
+                      recentEntityId={recentEntityId}
                       onHover={onHover}
                       onLeave={onLeave}
                       onActivate={onActivate}
@@ -508,6 +868,8 @@ function PetYearTimeline({
   families,
   people,
   pinnedEntityId,
+  focusedEntityId,
+  recentEntityId,
   onHover,
   onLeave,
   onActivate,
@@ -517,6 +879,8 @@ function PetYearTimeline({
   families: NormalizedFamily[]
   people: Person[]
   pinnedEntityId: string | null
+  focusedEntityId: string | null
+  recentEntityId?: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onActivate: (entity: Entity) => void
@@ -533,7 +897,7 @@ function PetYearTimeline({
             <div className="pet-species-year-cell" data-pet-species={column.key} key={column.key}>
               {band.pets.filter((pet) => petSpeciesKey(pet) === column.key).map((pet) => {
                 const owner = people.find((person) => person.id === pet.ownerPersonId)
-                return <EntityCard key={pet.id} entity={pet} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+                return <EntityCard key={pet.id} entity={pet} owner={owner} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
               })}
             </div>
           ))}
@@ -546,7 +910,21 @@ function PetYearTimeline({
   )
 }
 
-export function LineageGraph({ mode, people, families, pets, petFamilies }: LineageGraphProps) {
+export function LineageGraph({
+  mode,
+  people,
+  families,
+  pets,
+  petFamilies,
+  onOwnerNavigate,
+  onPetNavigate,
+  focusRequest = null,
+  onFocusAcknowledge,
+  canEdit = false,
+  onEditAction,
+  onEntityPatch,
+  recentEntityId = null,
+}: LineageGraphProps) {
   const currentDate = useCurrentDate()
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -554,6 +932,10 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const activePointers = useRef(new Map<number, { x: number; y: number }>())
   const gestureRef = useRef<Gesture | null>(null)
   const wheelTimer = useRef<number | null>(null)
+  const focusTimer = useRef<number | null>(null)
+  const focusRequestRef = useRef<LineageFocusRequest | null>(focusRequest)
+  const initialFitComplete = useRef(false)
+  const viewportSizeRef = useRef({ width: 0, height: 0 })
   const [view, setView] = useState<ViewState>({ x: 24, y: 24, scale: 0.82 })
   const viewRef = useRef(view)
   const [paths, setPaths] = useState<ConnectorPath[]>([])
@@ -561,12 +943,21 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const [pinnedEntityId, setPinnedEntityId] = useState<string | null>(null)
   const [pinnedPosition, setPinnedPosition] = useState<PinnedPosition | null>(null)
   const [interacting, setInteracting] = useState(false)
+  const [programmaticFocus, setProgrammaticFocus] = useState(false)
+  const [dismissedFocusRequestId, setDismissedFocusRequestId] = useState<number | null>(null)
+  const [highlightFilter, setHighlightFilter] = useState<HighlightFilter>('set')
   useEffect(() => { viewRef.current = view }, [view])
 
   const entities = useMemo<Map<string, Entity>>(
     () => new Map((mode === 'people' ? people : pets).map((entity) => [entity.id, entity])),
     [mode, people, pets],
   )
+  const focusedEntityId = focusRequest
+    && focusRequest.requestId !== dismissedFocusRequestId
+    && entities.has(focusRequest.entityId)
+    ? focusRequest.entityId
+    : null
+  focusRequestRef.current = focusedEntityId && focusRequest ? focusRequest : null
   const pinnedEntity = pinnedEntityId ? entities.get(pinnedEntityId) : undefined
   const normalizedFamilies = useMemo<NormalizedFamily[]>(
     () => mode === 'people'
@@ -578,6 +969,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const petYearBands = useMemo(() => buildPetYearBands(pets), [pets])
   const petSpeciesColumns = useMemo(() => buildPetSpeciesColumns(pets, petYearBands), [petYearBands, pets])
   const childIds = useMemo(() => new Set(normalizedFamilies.flatMap((family) => family.children.map((child) => child.entityId))), [normalizedFamilies])
+  const pinnedHasRecordedParents = pinnedEntity ? childIds.has(pinnedEntity.id) : false
   const childGroupIds = useMemo(() => new Set([...childIds].map((id) => groupByEntity.get(id)?.id).filter((id): id is string => Boolean(id))), [childIds, groupByEntity])
   const rootGroups = useMemo(() => {
     const roots = partnerGroups.filter((group) => !childGroupIds.has(group.id))
@@ -601,6 +993,35 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const canvasWidth = mode === 'pets'
     ? Math.max(1160, petTimelineWidth)
     : Math.max(1160, branchUnits * 174 + Math.max(0, rootGroups.length - 1) * 32)
+
+  const focusEntityInView = useCallback((entityId: string, animate = true, scroll = true) => {
+    const viewport = viewportRef.current
+    const canvas = canvasRef.current
+    if (!viewport || !canvas) return false
+    const card = [...canvas.querySelectorAll<HTMLElement>('[data-entity-id]')]
+      .find((candidate) => candidate.dataset.entityId === entityId)
+    if (!card) return false
+    const portrait = card.querySelector<HTMLElement>('.portrait-ring') ?? card
+    const center = elementCenterInAncestor(portrait, canvas)
+    const scale = clampScale(viewport.clientWidth <= 640 ? 1.25 : 1.5)
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const shouldAnimate = animate && !reduceMotion
+
+    if (focusTimer.current) window.clearTimeout(focusTimer.current)
+    setInteracting(false)
+    setProgrammaticFocus(shouldAnimate)
+    setView({
+      x: viewport.clientWidth / 2 - center.x * scale,
+      y: viewport.clientHeight / 2 - center.y * scale,
+      scale,
+    })
+    if (scroll) viewport.scrollIntoView?.({ behavior: shouldAnimate ? 'smooth' : 'auto', block: 'center' })
+    if (shouldAnimate) {
+      focusTimer.current = window.setTimeout(() => setProgrammaticFocus(false), 560)
+    }
+    return true
+  }, [])
 
   const measurePinnedPopover = useCallback(() => {
     const viewport = viewportRef.current
@@ -759,6 +1180,16 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     return () => { cancelAnimationFrame(frame); observer.disconnect() }
   }, [entities, measurePinnedPopover, paths, pinnedEntityId, view])
 
+  useLayoutEffect(() => {
+    if (!focusedEntityId) return
+    const frame = requestAnimationFrame(() => focusEntityInView(focusedEntityId))
+    return () => cancelAnimationFrame(frame)
+  }, [focusEntityInView, focusRequest?.requestId, focusedEntityId])
+
+  useEffect(() => () => {
+    if (focusTimer.current) window.clearTimeout(focusTimer.current)
+  }, [])
+
   const resetView = useCallback(() => {
     const viewport = viewportRef.current
     if (!viewport) return
@@ -768,12 +1199,35 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     setView({ x, y: 20, scale })
   }, [canvasWidth])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (initialFitComplete.current || focusRequestRef.current) return
     resetView()
-    const onResize = () => resetView()
+    initialFitComplete.current = true
+    const viewport = viewportRef.current
+    if (viewport) viewportSizeRef.current = { width: viewport.clientWidth, height: viewport.clientHeight }
+  }, [resetView])
+
+  useEffect(() => {
+    const onResize = () => {
+      const viewport = viewportRef.current
+      if (!viewport) return
+      const activeFocus = focusRequestRef.current
+      if (activeFocus) focusEntityInView(activeFocus.entityId, false, false)
+      else {
+        const previous = viewportSizeRef.current
+        if (previous.width && previous.height) {
+          setView((current) => ({
+            ...current,
+            x: current.x + (viewport.clientWidth - previous.width) / 2,
+            y: current.y + (viewport.clientHeight - previous.height) / 2,
+          }))
+        }
+      }
+      viewportSizeRef.current = { width: viewport.clientWidth, height: viewport.clientHeight }
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [resetView, mode])
+  }, [focusEntityInView])
 
   useEffect(() => {
     const viewport = viewportRef.current
@@ -877,6 +1331,10 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const onHover = (entity: Entity, x: number, y: number) => setHover({ entity, x, y })
   const onLeave = () => setHover(null)
   const onActivate = (entity: Entity) => {
+    if (focusRequest && focusedEntityId === entity.id) {
+      setDismissedFocusRequestId(focusRequest.requestId)
+      onFocusAcknowledge?.(focusRequest.requestId)
+    }
     setPinnedPosition(null)
     setPinnedEntityId((current) => current === entity.id ? null : entity.id)
   }
@@ -886,7 +1344,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   }
 
   return (
-    <section className="lineage-section" aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
+    <section className={`lineage-section highlight-${highlightFilter}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
       <div className="graph-toolbar">
         <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
@@ -896,7 +1354,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
         </div>
       </div>
       <div
-        className={`lineage-viewport ${interacting ? 'is-interacting' : ''}`}
+        className={`lineage-viewport ${interacting ? 'is-interacting ' : ''}${programmaticFocus ? 'is-owner-focusing' : ''}`}
         data-testid="lineage-viewport"
         ref={viewportRef}
         role="group"
@@ -917,6 +1375,16 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
           setView((current) => ({ ...current, x: current.x + movement.x, y: current.y + movement.y }))
         }}
       >
+        <label className="highlight-control" onPointerDown={(event) => event.stopPropagation()}>
+          <span>Highlight</span>
+          <select value={highlightFilter} onChange={(event) => setHighlightFilter(event.target.value as HighlightFilter)} aria-label="Highlight profiles">
+            <option value="set">Set</option>
+            <option value="dead">Dead</option>
+            <option value="alive">Alive</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </label>
         <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="connector-layer" aria-hidden="true">
             {paths.map((path) => (
@@ -930,10 +1398,10 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
             ))}
           </svg>
           {mode === 'pets' ? (
-            <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+            <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
           ) : (
             <div className="root-forest">
-              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />)}
+              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />)}
             </div>
           )}
           {mode === 'people' && standalone.length > 0 && (
@@ -942,24 +1410,36 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
                 const entity = entities.get(id)
                 if (!entity) return null
                 const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
-                return <EntityCard key={id} entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+                return <EntityCard key={id} entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
               })}
             </div>
           )}
         </div>
         {pinnedEntity && (
           <DetailPopover
+            key={pinnedEntity.id}
             entity={pinnedEntity}
             people={people}
+            pets={pets}
             today={currentDate}
             pinnedPosition={pinnedPosition}
             popoverRef={pinnedPopoverRef}
+            onClose={() => {
+              setPinnedEntityId(null)
+              setPinnedPosition(null)
+            }}
+            onOwnerNavigate={onOwnerNavigate}
+            onPetNavigate={onPetNavigate}
+            canEdit={canEdit}
+            hasRecordedParents={pinnedHasRecordedParents}
+            onEditAction={onEditAction}
+            onEntityPatch={onEntityPatch}
           />
         )}
       </div>
       <p className="graph-help">Hover for quick details · Select a portrait for its full profile and links</p>
       {hover && hover.entity.id !== pinnedEntityId && (
-        <DetailPopover entity={hover.entity} people={people} today={currentDate} hover={hover} />
+        <DetailPopover key={hover.entity.id} entity={hover.entity} people={people} pets={pets} today={currentDate} hover={hover} />
       )}
     </section>
   )

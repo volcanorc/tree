@@ -1,4 +1,4 @@
-# Celestial Lineage Family Archive
+# Celestial Lineage Archive
 
 A responsive, data-driven family and pet lineage website built with React, TypeScript, and Vite. It is designed for the GitHub Pages project URL:
 
@@ -59,7 +59,7 @@ People and pets have independent portrait-number namespaces. Automatic paths are
 
 Version-1 through version-4 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 5. Legacy `ageOverride` values are removed because age is now always calculated.
 
-People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept two- or four-digit years with optional month and day values, including numeric months, month names, abbreviations, and unambiguous close misspellings such as `12-decamber-9`. Two-digit years expand into the 2000s, and valid pet dates normalize on blur to readable values such as `2012-dec-9`. Ambiguous month fragments remain invalid. Public profile cards display full English month names. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. An empty Death date editor pulses until it receives focus and is cleared when a record changes back to Alive.
+People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept two- or four-digit years with optional month and day values, including numeric months, month names, abbreviations, and unambiguous close misspellings such as `12-decamber-9`. Two-digit years expand into the 2000s, and valid pet dates normalize on blur to readable values such as `2012-dec-9`. Ambiguous month fragments remain invalid. Public profile cards display natural dates such as `December 9 2020`, `December 2020`, or `2020`. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. An empty Death date editor pulses until it receives focus and is cleared when a record changes back to Alive. Newly created people and pets also highlight their unfinished guide fields until each field receives focus during the current dashboard session.
 
 Selecting any portrait toggles a profile callout anchored to that portrait inside the graph. Portraits never navigate directly; safe URLs appear as numbered `Visit` buttons in the callout. The selected callout persists while the map pans or zooms, while hovering another portrait can still show its quick details.
 

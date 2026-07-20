@@ -7,6 +7,8 @@ import {
   addPartner,
   addPetOffspring,
   addPetPartner,
+  addPetSibling,
+  addSibling,
   applyPetDeletePlan,
   applyPersonDeletePlan,
   calculateAge,
@@ -24,6 +26,7 @@ import {
   nextPortraitNumber,
   normalizeArchiveDate,
   parseArchiveDate,
+  portraitNumberFromPath,
   planPetDeletion,
   planPersonDeletion,
   sortChildren,
@@ -99,8 +102,8 @@ describe('age, ordering, and migration', () => {
   })
 
   it('formats public people and pet dates with full English month names', () => {
-    expect(displayArchiveDate('1998-12-09')).toBe('1998-december-9')
-    expect(displayArchiveDate('2020-mar')).toBe('2020-march')
+    expect(displayArchiveDate('1998-12-09')).toBe('December 9 1998')
+    expect(displayArchiveDate('2020-mar')).toBe('March 2020')
     expect(displayArchiveDate('2013')).toBe('2013')
     expect(displayArchiveDate('')).toBe('?')
   })
@@ -165,6 +168,33 @@ describe('age, ordering, and migration', () => {
     expect('ageOverride' in migrated.people[0]).toBe(false)
     expect('ageOverride' in migrated.pets[0]).toBe(false)
     expect(migrateTreeData(fresh())).toEqual(fresh())
+  })
+
+  it('migrates only blank and old-default titles while preserving custom titles', () => {
+    const oldDefault = fresh()
+    oldDefault.site.title = 'The Family Archive'
+    expect(migrateTreeData(oldDefault).site.title).toBe('The Lineage Archive')
+
+    const blank = fresh()
+    blank.site.title = '   '
+    expect(migrateTreeData(blank).site.title).toBe('The Lineage Archive')
+
+    const custom = fresh()
+    custom.site.title = 'Hermoso Family History'
+    expect(migrateTreeData(custom).site.title).toBe('Hermoso Family History')
+  })
+
+  it('parses only canonical portrait paths in the correct namespace', () => {
+    expect(portraitNumberFromPath('portraits/25.png', 'person')).toBe(25)
+    expect(portraitNumberFromPath('/portraits/25.png', 'person')).toBe(25)
+    expect(portraitNumberFromPath('portraits/pets/4.png', 'pet')).toBe(4)
+    expect(portraitNumberFromPath('/portraits/pets/4.png', 'pet')).toBe(4)
+    expect(portraitNumberFromPath('portraits/pets/4.png', 'person')).toBeNull()
+    expect(portraitNumberFromPath('portraits/4.png', 'pet')).toBeNull()
+    expect(portraitNumberFromPath('portraits/custom.png', 'person')).toBeNull()
+    expect(portraitNumberFromPath('portraits/25', 'person')).toBeNull()
+    expect(portraitNumberFromPath('https://example.com/portraits/25.png', 'person')).toBeNull()
+    expect(portraitNumberFromPath('portraits/0.png', 'person')).toBeNull()
   })
 })
 
@@ -306,12 +336,41 @@ describe('editing operations', () => {
     expect(next.people.at(-1)?.portraitNumber).toBe(26)
   })
 
+  it('adds human siblings to the exact two-parent or single-parent family unit', () => {
+    const data = fresh()
+    data.people.push(
+      createBlankPerson('parent-a', 'Parent A', 25),
+      createBlankPerson('partner-one', 'Partner One', 26),
+      createBlankPerson('partner-two', 'Partner Two', 27),
+      createBlankPerson('first-child', 'First Child', 28),
+      createBlankPerson('other-child', 'Other Child', 29),
+      createBlankPerson('solo-child', 'Solo Child', 30),
+    )
+    data.families.push(
+      { id: 'first-union', parentIds: ['parent-a', 'partner-one'], children: [{ personId: 'first-child', birthOrder: 2 }] },
+      { id: 'second-union', parentIds: ['parent-a', 'partner-two'], children: [{ personId: 'other-child', birthOrder: 1 }] },
+      { id: 'solo-union', parentIds: ['partner-two'], children: [{ personId: 'solo-child', birthOrder: 4 }] },
+    )
+
+    const partnered = addSibling(data, 'first-child')
+    const partneredId = partnered.people.at(-1)!.id
+    expect(partnered.families.find((family) => family.id === 'first-union')?.children).toContainEqual({ personId: partneredId, birthOrder: 3 })
+    expect(partnered.families.find((family) => family.id === 'second-union')?.children.some((child) => child.personId === partneredId)).toBe(false)
+
+    const solo = addSibling(partnered, 'solo-child')
+    expect(solo.families.find((family) => family.id === 'solo-union')?.children).toContainEqual({ personId: solo.people.at(-1)!.id, birthOrder: 5 })
+    expect(addSibling(data, 'parent-a')).toBe(data)
+  })
+
   it('retains children under the remaining parent', () => {
-    const result = deletePerson(fresh(), 'new-partner')
+    const data = fresh()
+    data.pets[0].ownerPersonId = 'new-partner'
+    const result = deletePerson(data, 'new-partner')
     expect(result.deleted).toBe(true)
     const family = result.data.families.find((item) => item.id === 'family-new-child')!
     expect(family.parentIds).toEqual(['new-child'])
     expect(family.children.map((child) => child.personId)).toEqual(['new-child-2'])
+    expect(result.data.pets[0].ownerPersonId).toBe('')
   })
 
   it('cascades an orphaned branch but preserves descendants under an unselected partner', () => {
@@ -353,7 +412,8 @@ describe('editing operations', () => {
     const pet = { ...createBlankPet('luna', 'Luna', 2), species: 'Dog', ownerPersonId: 'child-2', links: ['https://example.com/luna', 'https://example.com/video'] }
     const withPet = { ...data, pets: [...data.pets, pet] }
     const withOffspring = addPetOffspring(withPet, 'luna', 'Nova')
-    const partnered = addPetPartner(withOffspring, 'luna', 'Sol')
+    const lunaFamily = withOffspring.petFamilies.find((family) => family.parentPetIds.includes('luna'))!
+    const partnered = addPetPartner(withOffspring, 'luna', 'Sol', lunaFamily.id)
     expect(partnered.petFamilies.find((family) => family.parentPetIds.includes('luna'))?.parentPetIds).toEqual(['luna', 'sol'])
     const singleParentPlan = planPetDeletion(withOffspring, ['luna'])
     expect(singleParentPlan.cascadeIds).toEqual(['nova'])
@@ -363,6 +423,26 @@ describe('editing operations', () => {
     const exported = exportTreeData(partnered)
     expect(JSON.parse(exported)).toEqual(partnered)
     expect(migrateTreeData(JSON.parse(exported))).toEqual(partnered)
+  })
+
+  it('supports multiple pet unions, partner-specific offspring, and exact-parent pet siblings', () => {
+    let data = fresh()
+    data = addPetPartner(data, 'iring-brown', 'First Pet Partner')
+    data = addPetPartner(data, 'iring-brown', 'Second Pet Partner')
+    const iringFamilies = data.petFamilies.filter((family) => family.parentPetIds.includes('iring-brown'))
+    expect(iringFamilies).toHaveLength(2)
+    expect(iringFamilies.map((family) => family.parentPetIds[1])).toEqual(['first-pet-partner', 'second-pet-partner'])
+
+    data = addPetOffspring(data, 'iring-brown', 'Second Union Kitten', iringFamilies[1].id)
+    const kittenId = data.pets.at(-1)!.id
+    expect(data.petFamilies.find((family) => family.id === iringFamilies[1].id)?.children).toEqual([{ petId: kittenId, birthOrder: 1 }])
+    expect(data.petFamilies.find((family) => family.id === iringFamilies[0].id)?.children).toEqual([])
+
+    const withSibling = addPetSibling(data, kittenId)
+    const siblingId = withSibling.pets.at(-1)!.id
+    expect(withSibling.petFamilies.find((family) => family.id === iringFamilies[1].id)?.children).toContainEqual({ petId: siblingId, birthOrder: 2 })
+    expect(addPetSibling(data, 'iring-brown')).toBe(data)
+    expect(validateTreeData(withSibling)).toEqual({ valid: true, errors: [] })
   })
 
   it('plans individual and bulk pet deletion with surviving parents, recursive cascades, and protected blocking', () => {

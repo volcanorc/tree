@@ -1,5 +1,21 @@
 export type Gender = 'male' | 'female' | 'nonbinary' | 'prefer-not-to-say' | 'unknown'
 export type LifeStatus = 'alive' | 'dead'
+export type ArchiveEntityKind = 'person' | 'pet'
+export type ArchiveEditAction = 'child' | 'partner' | 'sibling' | 'settings' | 'delete'
+
+export interface ArchiveEditIntent {
+  kind: ArchiveEntityKind
+  entityId: string
+  action: ArchiveEditAction
+}
+
+export interface ArchiveEditRequest extends ArchiveEditIntent {
+  requestId: number
+}
+
+export type ArchiveEntityPatch =
+  | { kind: 'person'; entityId: string; patch: Partial<Person> }
+  | { kind: 'pet'; entityId: string; patch: Partial<Pet> }
 
 export interface SiteConfig {
   title: string

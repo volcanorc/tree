@@ -1,14 +1,36 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import seed from '../test/fixtures/tree-data-v4.json'
-import type { TreeData } from '../types'
+import type { ArchiveEditIntent, ArchiveEntityPatch, TreeData } from '../types'
 import { addPartner, createBlankPet } from '../lib/data'
 import { LineageGraph } from './LineageGraph'
 
 const fresh = () => structuredClone(seed) as TreeData
 
-function renderGraph(data = fresh(), mode: 'people' | 'pets' = 'people') {
-  return render(<LineageGraph mode={mode} people={data.people} families={data.families} pets={data.pets} petFamilies={data.petFamilies} />)
+function renderGraph(
+  data = fresh(),
+  mode: 'people' | 'pets' = 'people',
+  options: {
+    onOwnerNavigate?: (personId: string) => void
+    onPetNavigate?: (petId: string) => void
+    focusRequest?: { entityId: string; requestId: number } | null
+    onFocusAcknowledge?: (requestId: number) => void
+    canEdit?: boolean
+    onEditAction?: (intent: ArchiveEditIntent) => void
+    onEntityPatch?: (request: ArchiveEntityPatch) => string
+    recentEntityId?: string | null
+  } = {},
+) {
+  return render(
+    <LineageGraph
+      mode={mode}
+      people={data.people}
+      families={data.families}
+      pets={data.pets}
+      petFamilies={data.petFamilies}
+      {...options}
+    />,
+  )
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -35,8 +57,8 @@ describe('LineageGraph details and portraits', () => {
     fireEvent.pointerEnter(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', clientX: 100, clientY: 100 })
     const tooltip = screen.getByRole('tooltip', { name: /Father details/i })
     expect(tooltip).toHaveTextContent('Age19')
-    expect(tooltip).toHaveTextContent('Born2000-july-18')
-    expect(tooltip).toHaveTextContent('Died2020-july-17')
+    expect(tooltip).toHaveTextContent('BornJuly 18 2000')
+    expect(tooltip).toHaveTextContent('DiedJuly 17 2020')
   })
 
   it('uses one PNG candidate, then the silhouette, while preserving custom PNG overrides', () => {
@@ -184,20 +206,46 @@ describe('LineageGraph details and portraits', () => {
     expect(tooltip).toHaveTextContent('StatusDead')
     expect(within(tooltip).getByLabelText('Portrait number 1')).toHaveTextContent('1')
   })
+
+  it('formats partial pet birth dates and full pet death dates naturally', () => {
+    const data = fresh()
+    data.pets[0].birthDate = '2020-mar'
+    data.pets[0].deathDate = '2024-dec-9'
+    renderGraph(data, 'pets')
+    fireEvent.pointerEnter(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', clientX: 100, clientY: 100 })
+    const tooltip = screen.getByRole('tooltip', { name: /Iring Brown details/i })
+    expect(tooltip).toHaveTextContent('BornMarch 2020')
+    expect(tooltip).toHaveTextContent('DiedDecember 9 2024')
+  })
 })
 
 describe('LineageGraph multi-link activation', () => {
-  it('toggles pinned details from the same portrait without navigating or using a close button', () => {
+  it('toggles pinned details from the same portrait and provides a close button', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     renderGraph()
     const father = screen.getByRole('button', { name: /Father details/i })
     fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
     expect(open).not.toHaveBeenCalled()
-    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
-    expect(screen.queryByRole('button', { name: 'Close details' })).not.toBeInTheDocument()
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    expect(dialog).toHaveAttribute('role', 'dialog')
+    expect(within(dialog).getByLabelText('Close profile details')).toBeInTheDocument()
+    expect(father).toHaveClass('is-active')
     expect(father).toHaveAttribute('aria-expanded', 'true')
     fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
     expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+    expect(father).not.toHaveClass('is-active')
+  })
+
+  it('closes pinned details from the callout button and clears the active portrait', () => {
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    expect(father).toHaveClass('is-active')
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Close profile details'))
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+    expect(father).not.toHaveClass('is-active')
+    expect(father).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('opens one safe link only through Visit 1 for mouse and keyboard activation', () => {
@@ -250,7 +298,318 @@ describe('LineageGraph multi-link activation', () => {
   })
 })
 
+describe('LineageGraph highlights and archive actions', () => {
+  it('keeps a fixed Set selector outside the canvas and targets exactly one chosen filter', () => {
+    const data = fresh()
+    data.people.find((person) => person.id === 'father')!.status = 'dead'
+    data.people.find((person) => person.id === 'mother')!.gender = 'female'
+    const { container } = renderGraph(data)
+    const viewport = screen.getByTestId('lineage-viewport')
+    const canvas = screen.getByTestId('lineage-canvas')
+    const selector = screen.getByLabelText('Highlight profiles')
+    const control = selector.closest<HTMLElement>('.highlight-control')!
+    expect(selector).toHaveValue('set')
+    expect(viewport).toContainElement(control)
+    expect(canvas).not.toContainElement(control)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
+
+    fireEvent.change(selector, { target: { value: 'dead' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(container.querySelector('[data-entity-id="father"]')).toHaveAttribute('data-status', 'dead')
+    expect(container.querySelectorAll('.highlight-dead [data-status="dead"]')).toHaveLength(1)
+
+    fireEvent.change(selector, { target: { value: 'alive' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-alive')
+    fireEvent.change(selector, { target: { value: 'male' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
+    fireEvent.change(selector, { target: { value: 'female' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+    expect(container.querySelector('[data-entity-id="mother"]')).toHaveAttribute('data-gender', 'female')
+  })
+
+  it('keeps active gold and owner-target states separate from filter matching', async () => {
+    const { container } = renderGraph(fresh(), 'people', { focusRequest: { entityId: 'father', requestId: 91 } })
+    fireEvent.change(screen.getByLabelText('Highlight profiles'), { target: { value: 'alive' } })
+    const father = screen.getByRole('button', { name: /Father details.*navigation target/i })
+    expect(father).toHaveClass('is-owner-target')
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    await waitFor(() => expect(father).toHaveClass('is-active'))
+    expect(father).not.toHaveClass('is-owner-target')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-alive')
+  })
+
+  it('applies the same status and gender filters to pet portraits', () => {
+    const data = fresh()
+    const { container } = renderGraph(data, 'pets')
+    const selector = screen.getByLabelText('Highlight profiles')
+    const iring = container.querySelector('[data-entity-id="iring-brown"]')
+
+    fireEvent.change(selector, { target: { value: 'dead' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(iring).toHaveAttribute('data-status', 'dead')
+    fireEvent.change(selector, { target: { value: 'female' } })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+    expect(iring).toHaveAttribute('data-gender', 'female')
+  })
+
+  it('shows edit actions only in authenticated pinned profiles and reports exact intents', () => {
+    const onEditAction = vi.fn()
+    const loggedOut = renderGraph()
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Child 1 details/i }), { pointerType: 'mouse', button: 0 })
+    expect(screen.queryByLabelText('Archive editing actions')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Profile actions')).not.toBeInTheDocument()
+    loggedOut.unmount()
+
+    renderGraph(fresh(), 'people', { canEdit: true, onEditAction })
+    const child = screen.getByRole('button', { name: /Child 1 details/i })
+    fireEvent.pointerEnter(child, { pointerType: 'mouse', clientX: 100, clientY: 100 })
+    expect(screen.queryByLabelText('Archive editing actions')).not.toBeInTheDocument()
+    fireEvent.pointerUp(child, { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Child 1 details/i, { selector: 'aside' })
+    expect(within(dialog).getByText('+ Child')).toBeInTheDocument()
+    expect(within(dialog).getByText('+ Partner')).toBeInTheDocument()
+    const sibling = within(dialog).getByText('+ Sibling')
+    expect(sibling).toBeEnabled()
+    fireEvent.click(sibling)
+    expect(onEditAction).toHaveBeenCalledWith({ kind: 'person', entityId: 'child-1', action: 'sibling' })
+  })
+
+  it('shows the authenticated profile menu, protects locked deletion, and reports exact management intents', () => {
+    const onEditAction = vi.fn()
+    renderGraph(fresh(), 'people', { canEdit: true, onEditAction })
+    const father = screen.getByRole('button', { name: /Father details/i })
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    let dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    expect(within(dialog).getByLabelText('Portrait number 1')).toHaveClass('is-admin-position')
+    const menuButton = within(dialog).getByLabelText('Profile actions')
+    fireEvent.click(menuButton)
+    expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+    expect(within(dialog).getByLabelText('Delete — protected record')).toBeDisabled()
+    fireEvent.click(within(dialog).getByText('Settings'))
+    expect(onEditAction).toHaveBeenCalledWith({ kind: 'person', entityId: 'father', action: 'settings' })
+
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Grandchild 1\.1 details/i }), { pointerType: 'mouse', button: 0 })
+    dialog = screen.getByLabelText(/Grandchild 1\.1 details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Profile actions'))
+    fireEvent.click(within(dialog).getByLabelText('Delete'))
+    expect(onEditAction).toHaveBeenCalledWith({ kind: 'person', entityId: 'grandchild-1-1', action: 'delete' })
+  })
+
+  it('closes only the authenticated profile menu on Escape or outside interaction', () => {
+    renderGraph(fresh(), 'people', { canEdit: true, onEditAction: vi.fn() })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Child 1 details/i }), { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Child 1 details/i, { selector: 'aside' })
+    const trigger = within(dialog).getByLabelText('Profile actions')
+    fireEvent.click(trigger)
+    expect(within(dialog).getByLabelText('Profile actions menu')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(within(dialog).queryByLabelText('Profile actions menu')).not.toBeInTheDocument()
+    expect(dialog).toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(within(dialog).queryByLabelText('Profile actions menu')).not.toBeInTheDocument()
+    expect(dialog).toBeInTheDocument()
+  })
+
+  it('disables sibling creation without parents and uses pet-specific action wording', () => {
+    const people = renderGraph(fresh(), 'people', { canEdit: true, onEditAction: vi.fn() })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', button: 0 })
+    expect(screen.getByTitle('No recorded parents')).toBeDisabled()
+    people.unmount()
+
+    const onEditAction = vi.fn()
+    renderGraph(fresh(), 'pets', { canEdit: true, onEditAction })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByText('+ Offspring'))
+    expect(onEditAction).toHaveBeenCalledWith({ kind: 'pet', entityId: 'iring-brown', action: 'child' })
+    expect(within(dialog).getByTitle('No recorded parents')).toBeDisabled()
+  })
+
+  it('shows authenticated pencils only on pinned profiles and commits a person birth date with Enter', () => {
+    const onEntityPatch = vi.fn(() => '')
+    renderGraph(fresh(), 'people', { canEdit: true, onEditAction: vi.fn(), onEntityPatch })
+    const father = screen.getByRole('button', { name: /Father details/i })
+    fireEvent.pointerEnter(father, { pointerType: 'mouse', clientX: 100, clientY: 100 })
+    expect(screen.getByRole('tooltip')).not.toContainElement(screen.queryByLabelText('Edit birthDate'))
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Edit birthDate'))
+    const input = within(dialog).getByLabelText('Edit birthDate', { selector: 'input' })
+    expect(input).toHaveAttribute('type', 'date')
+    fireEvent.change(input, { target: { value: '2000-07-18' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onEntityPatch).toHaveBeenCalledWith({ kind: 'person', entityId: 'father', patch: { birthDate: '2000-07-18' } })
+  })
+
+  it('keeps an invalid blank name editor open and normalizes fuzzy pet dates before saving', () => {
+    const personPatch = vi.fn(() => '')
+    const personGraph = renderGraph(fresh(), 'people', { canEdit: true, onEditAction: vi.fn(), onEntityPatch: personPatch })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', button: 0 })
+    let dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Edit displayName'))
+    const name = within(dialog).getByLabelText('Edit displayName', { selector: 'input' })
+    fireEvent.change(name, { target: { value: '' } })
+    fireEvent.keyDown(name, { key: 'Enter' })
+    expect(within(dialog).getByText('Name is required.')).toBeInTheDocument()
+    expect(personPatch).not.toHaveBeenCalled()
+    personGraph.unmount()
+
+    const petPatch = vi.fn(() => '')
+    renderGraph(fresh(), 'pets', { canEdit: true, onEditAction: vi.fn(), onEntityPatch: petPatch })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
+    dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Edit birthDate'))
+    const birth = within(dialog).getByLabelText('Edit birthDate', { selector: 'input' })
+    expect(birth).toHaveAttribute('type', 'text')
+    fireEvent.change(birth, { target: { value: '02-decamber-9' } })
+    fireEvent.blur(birth)
+    expect(petPatch).toHaveBeenCalledWith({ kind: 'pet', entityId: 'iring-brown', patch: { birthDate: '2002-dec-9' } })
+  })
+})
+
+describe('LineageGraph owner navigation', () => {
+  it('makes a resolved owner actionable only in the pinned pet profile', () => {
+    const data = fresh()
+    data.pets[0].ownerPersonId = 'father'
+    const onOwnerNavigate = vi.fn()
+    renderGraph(data, 'pets', { onOwnerNavigate })
+    const pet = screen.getByRole('button', { name: /Iring Brown details/i })
+
+    fireEvent.pointerEnter(pet, { pointerType: 'mouse', clientX: 100, clientY: 100 })
+    const tooltip = screen.getByRole('tooltip', { name: /Iring Brown details/i })
+    expect(tooltip).toHaveTextContent('OwnerFather')
+    expect(within(tooltip).queryByRole('button', { name: /View Father in family tree/i })).not.toBeInTheDocument()
+
+    fireEvent.pointerUp(pet, { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
+    const ownerButton = within(dialog).getByLabelText('View Father in family tree')
+    fireEvent.click(ownerButton)
+    expect(onOwnerNavigate).toHaveBeenCalledOnce()
+    expect(onOwnerNavigate).toHaveBeenCalledWith('father')
+  })
+
+  it('keeps an unresolved owner as a non-interactive fallback', () => {
+    const data = fresh()
+    data.pets[0].ownerPersonId = 'missing-owner'
+    renderGraph(data, 'pets', { onOwnerNavigate: vi.fn() })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
+    expect(dialog).toHaveTextContent('Owner?')
+    expect(within(dialog).queryByRole('button', { name: /family tree/i })).not.toBeInTheDocument()
+  })
+
+  it('shows owned pets as hover text and pinned navigation buttons', () => {
+    const data = fresh()
+    data.pets[0].ownerPersonId = 'father'
+    data.pets.push({ ...createBlankPet('brownie', 'Brownie', 2), species: 'Dog', ownerPersonId: 'father' })
+    const onPetNavigate = vi.fn()
+    renderGraph(data, 'people', { onPetNavigate })
+    const father = screen.getByRole('button', { name: /Father details/i })
+
+    fireEvent.pointerEnter(father, { pointerType: 'mouse', clientX: 100, clientY: 100 })
+    const tooltip = screen.getByRole('tooltip', { name: /Father details/i })
+    expect(tooltip).toHaveTextContent('Owned petsIring Brown, Brownie')
+    expect(within(tooltip).queryByRole('button', { name: /pet lineage/i })).not.toBeInTheDocument()
+
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('View Brownie in pet lineage'))
+    expect(onPetNavigate).toHaveBeenCalledWith('brownie')
+    expect(within(dialog).getByLabelText('View Iring Brown in pet lineage')).toBeInTheDocument()
+  })
+
+  it('omits the owned-pets row when no pet is assigned', () => {
+    renderGraph(fresh(), 'people', { onPetNavigate: vi.fn() })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    expect(dialog).not.toHaveTextContent('Owned pets')
+  })
+})
+
 describe('LineageGraph viewport controls', () => {
+  it('centers a requested owner, keeps the green target through other selections, and acknowledges the owner selection', async () => {
+    const onFocusAcknowledge = vi.fn()
+    const { rerender } = renderGraph(fresh(), 'people', {
+      focusRequest: { entityId: 'father', requestId: 11 },
+      onFocusAcknowledge,
+    })
+    const viewport = screen.getByTestId('lineage-viewport')
+    const canvas = screen.getByTestId('lineage-canvas')
+    const father = screen.getByRole('button', { name: /Father details.*navigation target/i })
+    const mother = screen.getByRole('button', { name: /Mother details/i })
+    const portrait = father.querySelector<HTMLElement>('.portrait-ring')!
+    const scrollIntoView = vi.fn()
+
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 800 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 600 })
+    Object.defineProperty(viewport, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    Object.defineProperty(portrait, 'offsetLeft', { configurable: true, value: 200 })
+    Object.defineProperty(portrait, 'offsetTop', { configurable: true, value: 100 })
+    Object.defineProperty(portrait, 'offsetWidth', { configurable: true, value: 106 })
+    Object.defineProperty(portrait, 'offsetHeight', { configurable: true, value: 106 })
+    Object.defineProperty(portrait, 'offsetParent', { configurable: true, value: canvas })
+
+    await waitFor(() => expect(canvas.style.transform).toBe('translate(20.5px, 70.5px) scale(1.5)'))
+    expect(viewport).toHaveClass('is-owner-focusing')
+    expect(father).toHaveClass('is-owner-target')
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+
+    fireEvent.pointerUp(mother, { pointerType: 'mouse', button: 0 })
+    expect(father).toHaveClass('is-owner-target')
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    expect(onFocusAcknowledge).toHaveBeenCalledWith(11)
+    expect(father).not.toHaveClass('is-owner-target')
+    expect(father).toHaveClass('is-active')
+
+    const data = fresh()
+    rerender(
+      <LineageGraph
+        mode="people"
+        people={data.people}
+        families={data.families}
+        pets={data.pets}
+        petFamilies={data.petFamilies}
+        focusRequest={{ entityId: 'father', requestId: 12 }}
+        onFocusAcknowledge={onFocusAcknowledge}
+      />,
+    )
+    await waitFor(() => expect(father).toHaveClass('is-owner-target'))
+  })
+
+  it('uses the smaller mobile owner-focus zoom', async () => {
+    renderGraph(fresh(), 'people', { focusRequest: { entityId: 'father', requestId: 21 } })
+    const viewport = screen.getByTestId('lineage-viewport')
+    const canvas = screen.getByTestId('lineage-canvas')
+    const father = screen.getByRole('button', { name: /Father details.*navigation target/i })
+    const portrait = father.querySelector<HTMLElement>('.portrait-ring')!
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 390 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 600 })
+    Object.defineProperty(viewport, 'scrollIntoView', { configurable: true, value: vi.fn() })
+    Object.defineProperty(portrait, 'offsetLeft', { configurable: true, value: 100 })
+    Object.defineProperty(portrait, 'offsetTop', { configurable: true, value: 100 })
+    Object.defineProperty(portrait, 'offsetWidth', { configurable: true, value: 106 })
+    Object.defineProperty(portrait, 'offsetHeight', { configurable: true, value: 106 })
+    Object.defineProperty(portrait, 'offsetParent', { configurable: true, value: canvas })
+
+    await waitFor(() => expect(canvas.style.transform).toContain('scale(1.25)'))
+  })
+
+  it('applies and acknowledges the same persistent focus behavior for a pet target', async () => {
+    const onFocusAcknowledge = vi.fn()
+    renderGraph(fresh(), 'pets', {
+      focusRequest: { entityId: 'iring-brown', requestId: 22 },
+      onFocusAcknowledge,
+    })
+    const pet = screen.getByRole('button', { name: /Iring Brown details.*navigation target/i })
+    expect(pet).toHaveClass('is-owner-target')
+    fireEvent.pointerUp(pet, { pointerType: 'mouse', button: 0 })
+    await waitFor(() => expect(onFocusAcknowledge).toHaveBeenCalledWith(22))
+    expect(pet).not.toHaveClass('is-owner-target')
+    expect(pet).toHaveClass('is-active')
+  })
+
   it('keeps a readable pinned callout anchored inside the viewport as the graph moves', async () => {
     const { container } = renderGraph()
     const viewport = screen.getByTestId('lineage-viewport')
