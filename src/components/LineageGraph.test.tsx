@@ -17,13 +17,13 @@ describe('LineageGraph details and portraits', () => {
   it('shows missing values, status, and portrait number in the hover card', () => {
     renderGraph()
     fireEvent.pointerEnter(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', clientX: 100, clientY: 100 })
-    const dialog = screen.getByRole('dialog', { name: /Father details/i })
-    expect(dialog).toHaveTextContent('Age?')
-    expect(dialog).toHaveTextContent('Born?')
-    expect(dialog).toHaveTextContent('StatusAlive')
-    expect(dialog).not.toHaveTextContent('Died')
-    expect(dialog).toHaveTextContent('Personality?')
-    expect(dialog).toHaveTextContent('1')
+    const tooltip = screen.getByRole('tooltip', { name: /Father details/i })
+    expect(tooltip).toHaveTextContent('Age?')
+    expect(tooltip).toHaveTextContent('Born?')
+    expect(tooltip).toHaveTextContent('StatusAlive')
+    expect(tooltip).not.toHaveTextContent('Died')
+    expect(tooltip).toHaveTextContent('Personality?')
+    expect(tooltip).toHaveTextContent('1')
   })
 
   it('shows death date and age at death for a dead person', () => {
@@ -33,9 +33,10 @@ describe('LineageGraph details and portraits', () => {
     data.people[0].deathDate = '2020-07-17'
     renderGraph(data)
     fireEvent.pointerEnter(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', clientX: 100, clientY: 100 })
-    const dialog = screen.getByRole('dialog', { name: /Father details/i })
-    expect(dialog).toHaveTextContent('Age19')
-    expect(dialog).toHaveTextContent('Died2020-07-17')
+    const tooltip = screen.getByRole('tooltip', { name: /Father details/i })
+    expect(tooltip).toHaveTextContent('Age19')
+    expect(tooltip).toHaveTextContent('Born2000-july-18')
+    expect(tooltip).toHaveTextContent('Died2020-july-17')
   })
 
   it('uses one PNG candidate, then the silhouette, while preserving custom PNG overrides', () => {
@@ -176,48 +177,60 @@ describe('LineageGraph details and portraits', () => {
     renderGraph(fresh(), 'pets')
     const iring = screen.getByRole('button', { name: /Iring Brown details/i })
     fireEvent.pointerEnter(iring, { pointerType: 'mouse', clientX: 100, clientY: 100 })
-    const dialog = screen.getByRole('dialog', { name: /Iring Brown details/i })
-    expect(dialog).toHaveTextContent(`Age${new Date().getFullYear() - 2013}`)
-    expect(dialog).toHaveTextContent('Born2013')
-    expect(dialog).toHaveTextContent('Died?')
-    expect(dialog).toHaveTextContent('StatusDead')
-    expect(within(dialog).getByLabelText('Portrait number 1')).toHaveTextContent('1')
+    const tooltip = screen.getByRole('tooltip', { name: /Iring Brown details/i })
+    expect(tooltip).toHaveTextContent(`Age${new Date().getFullYear() - 2013}`)
+    expect(tooltip).toHaveTextContent('Born2013')
+    expect(tooltip).toHaveTextContent('Died?')
+    expect(tooltip).toHaveTextContent('StatusDead')
+    expect(within(tooltip).getByLabelText('Portrait number 1')).toHaveTextContent('1')
   })
 })
 
 describe('LineageGraph multi-link activation', () => {
-  it('opens pinned details without navigation when there are no links and closes the modal', () => {
+  it('toggles pinned details from the same portrait without navigating or using a close button', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     renderGraph()
-    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse' })
+    const father = screen.getByRole('button', { name: /Father details/i })
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
     expect(open).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog', { name: /Father details/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Close details' }))
-    expect(screen.queryByRole('dialog', { name: /Father details/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+    expect(screen.queryByRole('button', { name: 'Close details' })).not.toBeInTheDocument()
+    expect(father).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
   })
 
-  it('opens one safe link directly for desktop mouse and keyboard activation', () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-    const data = fresh()
-    data.people[0].links = ['https://example.com/father']
-    const { unmount } = renderGraph(data)
-    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details, opens story link/i }), { pointerType: 'mouse' })
-    expect(open).toHaveBeenCalledWith('https://example.com/father', '_blank', 'noopener,noreferrer')
-
-    unmount()
-    renderGraph(data)
-    fireEvent.keyDown(screen.getByRole('button', { name: /Father details, opens story link/i }), { key: 'Enter' })
-    expect(open).toHaveBeenCalledTimes(2)
-  })
-
-  it('opens pinned details first for a one-link touch activation', () => {
+  it('opens one safe link only through Visit 1 for mouse and keyboard activation', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const data = fresh()
     data.people[0].links = ['https://example.com/father']
     renderGraph(data)
-    fireEvent.pointerUp(screen.getByRole('button', { name: /Father details, opens story link/i }), { pointerType: 'touch' })
+    const father = screen.getByRole('button', { name: /Father details, 1 profile link available/i })
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
     expect(open).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog', { name: /Father details/i })).toBeInTheDocument()
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    expect(within(dialog).getByText('Visit 1', { selector: 'a' })).toHaveAttribute('href', 'https://example.com/father')
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    fireEvent.keyDown(father, { key: 'Enter' })
+    expect(open).not.toHaveBeenCalled()
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+  })
+
+  it('replaces the pinned profile, ignores background activation, and keeps another hover tooltip visible', () => {
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+    const mother = screen.getByRole('button', { name: /Mother details/i })
+    fireEvent.pointerUp(father, { pointerType: 'touch', button: 0 })
+    fireEvent.pointerEnter(mother, { pointerType: 'mouse', clientX: 120, clientY: 100 })
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+    expect(screen.getByRole('tooltip', { name: /Mother details/i })).toBeInTheDocument()
+    fireEvent.pointerUp(mother, { pointerType: 'mouse', button: 0 })
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/Mother details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+    const viewport = screen.getByTestId('lineage-viewport')
+    fireEvent.pointerDown(viewport, { pointerType: 'mouse', pointerId: 22, clientX: 400, clientY: 300 })
+    fireEvent.pointerUp(viewport, { pointerType: 'mouse', pointerId: 22, clientX: 400, clientY: 300 })
+    expect(screen.getByLabelText(/Mother details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
   })
 
   it('renders exact Visit labels with safe new-tab attributes for multiple links', () => {
@@ -225,11 +238,11 @@ describe('LineageGraph multi-link activation', () => {
     const data = fresh()
     data.people[0].links = ['https://example.com/profile', 'http://example.com/video']
     renderGraph(data)
-    fireEvent.pointerUp(screen.getByRole('button', { name: /2 story links available/i }), { pointerType: 'mouse' })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /2 profile links available/i }), { pointerType: 'mouse', button: 0 })
     expect(open).not.toHaveBeenCalled()
-    const dialog = screen.getByRole('dialog', { name: /Father details/i })
-    const first = within(dialog).getByRole('link', { name: 'Visit 1' })
-    const second = within(dialog).getByRole('link', { name: 'Visit 2' })
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    const first = within(dialog).getByText('Visit 1', { selector: 'a' })
+    const second = within(dialog).getByText('Visit 2', { selector: 'a' })
     expect(first).toHaveAttribute('href', 'https://example.com/profile')
     expect(second).toHaveAttribute('href', 'http://example.com/video')
     expect(first).toHaveAttribute('target', '_blank')
@@ -238,6 +251,43 @@ describe('LineageGraph multi-link activation', () => {
 })
 
 describe('LineageGraph viewport controls', () => {
+  it('keeps a readable pinned callout anchored inside the viewport as the graph moves', async () => {
+    const { container } = renderGraph()
+    const viewport = screen.getByTestId('lineage-viewport')
+    const father = screen.getByRole('button', { name: /Father details/i })
+    const portrait = father.querySelector<HTMLElement>('.portrait-ring')!
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 800 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 600 })
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0, toJSON: () => ({}) })
+    let portraitLeft = 300
+    vi.spyOn(portrait, 'getBoundingClientRect').mockImplementation(() => ({
+      left: portraitLeft,
+      top: 300,
+      right: portraitLeft + 106,
+      bottom: 406,
+      width: 106,
+      height: 106,
+      x: portraitLeft,
+      y: 300,
+      toJSON: () => ({}),
+    }))
+
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
+    Object.defineProperty(dialog, 'offsetWidth', { configurable: true, value: 266 })
+    Object.defineProperty(dialog, 'offsetHeight', { configurable: true, value: 180 })
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    await waitFor(() => expect(dialog).toHaveStyle({ left: '220px', top: '103px', visibility: 'visible' }))
+    expect(dialog).toHaveClass('detail-pinned', 'is-above')
+    expect(viewport).toContainElement(dialog)
+    const firstLeft = dialog.style.left
+
+    portraitLeft = 500
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    await waitFor(() => expect(dialog.style.left).not.toBe(firstLeft))
+    expect(container.querySelector('.detail-pinned')).toBe(dialog)
+  })
+
   it('zooms only through the lineage viewport wheel listener and keeps toolbar controls', () => {
     renderGraph()
     const viewport = screen.getByTestId('lineage-viewport')

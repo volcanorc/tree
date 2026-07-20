@@ -69,7 +69,7 @@ const petTextFields: Array<{
   { key: 'displayName', label: 'Name', placeholder: 'Pet name' },
   { key: 'species', label: 'Species', placeholder: 'Dog, cat, bird…' },
   { key: 'breed', label: 'Breed', placeholder: '?' },
-  { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY, YYYY-MM, or YYYY-MM-DD' },
+  { key: 'birthDate', label: 'Birth date', placeholder: 'YY or YYYY, with optional month and day' },
   { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
   { key: 'personality', label: 'Personality', placeholder: 'Temperament and favorite things' },
   { key: 'biography', label: 'Short biography', placeholder: 'A short public story', textarea: true },
@@ -202,6 +202,7 @@ export function Dashboard(props: DashboardProps) {
   const [pendingPetDelete, setPendingPetDelete] = useState<PetDeletePlan | null>(null)
   const [showChildChooser, setShowChildChooser] = useState(false)
   const [showPartnerChooser, setShowPartnerChooser] = useState(false)
+  const [acknowledgedDeathFields, setAcknowledgedDeathFields] = useState<Set<string>>(new Set())
   const importInput = useRef<HTMLInputElement>(null)
   const validation = useMemo(() => validateTreeData(data), [data])
   const currentDate = useCurrentDate()
@@ -411,6 +412,30 @@ export function Dashboard(props: DashboardProps) {
   function removeSelectedPet() {
     if (!selectedPet) return
     beginPetDeletion([selectedPet.id])
+  }
+
+  function deathFieldKey(kind: 'person' | 'pet', id: string) {
+    return `${kind}:${id}`
+  }
+
+  function acknowledgeDeathField(kind: 'person' | 'pet', id: string) {
+    setAcknowledgedDeathFields((current) => {
+      const key = deathFieldKey(kind, id)
+      if (current.has(key)) return current
+      const next = new Set(current)
+      next.add(key)
+      return next
+    })
+  }
+
+  function resetDeathFieldAttention(kind: 'person' | 'pet', id: string) {
+    setAcknowledgedDeathFields((current) => {
+      const key = deathFieldKey(kind, id)
+      if (!current.has(key)) return current
+      const next = new Set(current)
+      next.delete(key)
+      return next
+    })
   }
 
   function beginPetDeletion(ids: string[]) {
@@ -683,6 +708,7 @@ export function Dashboard(props: DashboardProps) {
                         value={selectedPerson.status}
                         onChange={(event) => {
                           const nextStatus = event.target.value as Person['status']
+                          if (nextStatus === 'dead') resetDeathFieldAttention('person', selectedPerson.id)
                           updatePerson({ status: nextStatus, ...(nextStatus === 'alive' ? { deathDate: '' } : {}) })
                         }}
                       >
@@ -691,12 +717,13 @@ export function Dashboard(props: DashboardProps) {
                       </select>
                     </label>
                     {selectedPerson.status === 'dead' && (
-                      <label className="death-date-reveal">
+                      <label className={!selectedPerson.deathDate && !acknowledgedDeathFields.has(deathFieldKey('person', selectedPerson.id)) ? 'death-date-reveal' : undefined}>
                         Death date
                         <input
                           type="date"
                           value={selectedPerson.deathDate}
                           aria-invalid={Boolean(personDeathDateError)}
+                          onFocus={() => acknowledgeDeathField('person', selectedPerson.id)}
                           onChange={(event) => updatePerson({ deathDate: event.target.value })}
                         />
                         {personDeathDateError && <small className="field-warning" role="alert">{personDeathDateError}</small>}
@@ -857,6 +884,7 @@ export function Dashboard(props: DashboardProps) {
                         value={selectedPet.status}
                         onChange={(event) => {
                           const nextStatus = event.target.value as Pet['status']
+                          if (nextStatus === 'dead') resetDeathFieldAttention('pet', selectedPet.id)
                           updatePet({ status: nextStatus, ...(nextStatus === 'alive' ? { deathDate: '' } : {}) })
                         }}
                       >
@@ -865,13 +893,14 @@ export function Dashboard(props: DashboardProps) {
                       </select>
                     </label>
                     {selectedPet.status === 'dead' && (
-                      <label className="death-date-reveal">
+                      <label className={!selectedPet.deathDate && !acknowledgedDeathFields.has(deathFieldKey('pet', selectedPet.id)) ? 'death-date-reveal' : undefined}>
                         Death date
                         <input
                           type="text"
                           value={selectedPet.deathDate}
-                          placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
+                          placeholder="YY or YYYY, with optional month and day"
                           aria-invalid={Boolean(petDeathDateError)}
+                          onFocus={() => acknowledgeDeathField('pet', selectedPet.id)}
                           onChange={(event) => updatePet({ deathDate: event.target.value })}
                           onBlur={() => {
                             if (selectedPet.deathDate.trim()) {

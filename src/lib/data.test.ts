@@ -13,8 +13,10 @@ import {
   countDescendants,
   createBlankPerson,
   createBlankPet,
+  dateFieldError,
   deletePerson,
   deletePet,
+  displayArchiveDate,
   exportTreeData,
   isSafePortrait,
   migrateTreeData,
@@ -71,13 +73,47 @@ describe('age, ordering, and migration', () => {
     expect(calculateAge('', julyFirst)).toBe('?')
   })
 
-  it('parses and normalizes accepted pet month-name dates without accepting partial people dates', () => {
+  it('parses fuzzy pet month names and normalizes readable two- or four-digit-year dates', () => {
     expect(parseArchiveDate('2020-March', true)?.canonical).toBe('2020-03')
     expect(parseArchiveDate('2020-Mar', true)?.canonical).toBe('2020-03')
     expect(parseArchiveDate('2020-March-15', true)?.canonical).toBe('2020-03-15')
-    expect(normalizeArchiveDate('2020-JULY', true)).toBe('2020-07')
+    expect(normalizeArchiveDate('2002-12-9', true)).toBe('2002-dec-9')
+    expect(normalizeArchiveDate('02-december-9', true)).toBe('2002-dec-9')
+    expect(normalizeArchiveDate('12-jue-9', true)).toBe('2012-jun-9')
+    expect(normalizeArchiveDate('12-juy-9', true)).toBe('2012-jul-9')
+    expect(normalizeArchiveDate('12-ap-9', true)).toBe('2012-apr-9')
+    expect(normalizeArchiveDate('12-aprl-9', true)).toBe('2012-apr-9')
+    expect(normalizeArchiveDate('12-aril-9', true)).toBe('2012-apr-9')
+    expect(normalizeArchiveDate('12-aug-9', true)).toBe('2012-aug-9')
+    expect(normalizeArchiveDate('12-decamber-9', true)).toBe('2012-dec-9')
+    expect(normalizeArchiveDate('59', true)).toBe('2059')
+    expect(normalizeArchiveDate('2020-JULY', true)).toBe('2020-jul')
+    expect(parseArchiveDate('12-ma-9', true)).toBeNull()
+    expect(parseArchiveDate('12-ju-9', true)).toBeNull()
     expect(parseArchiveDate('2020-02-30', true)).toBeNull()
+    expect(parseArchiveDate('2024-02-29', true)).not.toBeNull()
+    expect(parseArchiveDate('2023-02-29', true)).toBeNull()
     expect(parseArchiveDate('2020-03', false)).toBeNull()
+    expect(parseArchiveDate('20-03-09', false)).toBeNull()
+    expect(dateFieldError('59', true, new Date(2026, 6, 1))).toBe('Date cannot be in the future.')
+  })
+
+  it('formats public people and pet dates with full English month names', () => {
+    expect(displayArchiveDate('1998-12-09')).toBe('1998-december-9')
+    expect(displayArchiveDate('2020-mar')).toBe('2020-march')
+    expect(displayArchiveDate('2013')).toBe('2013')
+    expect(displayArchiveDate('')).toBe('?')
+  })
+
+  it('normalizes valid existing pet dates during migration and preserves invalid text', () => {
+    const data = fresh()
+    data.pets[0].birthDate = '2002-12-09'
+    data.pets[0].deathDate = '12-decamber-9'
+    data.pets.push({ ...createBlankPet('invalid-date-pet', 'Invalid date pet', 99), birthDate: '12-ma-9' })
+    const migrated = migrateTreeData(data)
+    expect(migrated.pets[0].birthDate).toBe('2002-dec-9')
+    expect(migrated.pets[0].deathDate).toBe('2012-dec-9')
+    expect(migrated.pets.find((pet) => pet.id === 'invalid-date-pet')?.birthDate).toBe('12-ma-9')
   })
 
   it('sorts every current root child youngest-left by descending birth order', () => {

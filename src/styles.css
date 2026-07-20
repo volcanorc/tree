@@ -167,7 +167,8 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .standalone-row { margin-top: 80px; }
 .graph-help { position: absolute; bottom: 11px; width: 100%; margin: 0; text-align: center; color: #596679; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; pointer-events: none; }
 
-.detail-popover { position: fixed; z-index: 80; width: 236px; max-height: calc(100vh - 100px); overflow: auto; padding: 18px; border: 1px solid rgba(200, 131, 85, .45); background: rgba(8, 13, 21, .97); box-shadow: 0 22px 70px rgba(0,0,0,.65); pointer-events: none; }
+.detail-popover { z-index: 80; width: 236px; max-height: calc(100vh - 100px); overflow: auto; padding: 18px; border: 1px solid rgba(200, 131, 85, .45); background: rgba(8, 13, 21, .97); box-shadow: 0 22px 70px rgba(0,0,0,.65); }
+.detail-hover { position: fixed; pointer-events: none; }
 .detail-popover::before { content: ''; position: absolute; left: 0; top: 0; width: 28px; height: 1px; background: var(--copper); }
 .portrait-number { position: absolute; top: 9px; right: 11px; color: #69778a; font-size: .58rem; font-family: 'Manrope', sans-serif; letter-spacing: .08em; }
 .detail-popover h3 { margin: 2px 0 2px; color: #f2f3f4; font-size: 1.45rem; }
@@ -178,8 +179,10 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .detail-popover dt { color: #6e7b8e; font-size: .64rem; text-transform: uppercase; letter-spacing: .07em; }
 .detail-popover dd { margin: 0; color: #c6ccd5; font-size: .73rem; overflow-wrap: anywhere; }
 .popover-bio { color: #98a4b5; font-size: .72rem; line-height: 1.55; }
-.detail-pinned { inset: auto 12px 12px 12px; width: auto; max-height: 62vh; pointer-events: auto; }
-.popover-close { position: absolute; right: 9px; top: 8px; border: 0; background: transparent; color: #a9b3c1; font-size: 1.2rem; cursor: pointer; }
+.detail-pinned { position: absolute; width: min(266px, calc(100% - 16px)); max-height: calc(100% - 16px); pointer-events: auto; cursor: default; }
+.detail-pinned::after { content: ''; position: absolute; left: var(--popover-arrow-left); width: 12px; height: 12px; background: rgba(8, 13, 21, .97); transform: translateX(-50%) rotate(45deg); }
+.detail-pinned.is-above::after { bottom: -7px; border-right: 1px solid rgba(200, 131, 85, .45); border-bottom: 1px solid rgba(200, 131, 85, .45); }
+.detail-pinned.is-below::after { top: -7px; border-left: 1px solid rgba(200, 131, 85, .45); border-top: 1px solid rgba(200, 131, 85, .45); }
 .story-link { display: inline-flex; margin-top: 10px; padding: 8px 11px; border: 1px solid rgba(200,131,85,.4); color: var(--copper-light); text-decoration: none; font-size: .7rem; }
 .story-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .empty-lineage { height: 590px; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
@@ -204,7 +207,7 @@ input, select, textarea { width: 100%; border: 1px solid rgba(167,185,210,.19); 
 textarea { min-height: 95px; resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { border-color: rgba(200,131,85,.72); box-shadow: 0 0 0 3px rgba(200,131,85,.09); }
 input[aria-invalid="true"] { border-color: rgba(225,112,92,.72); box-shadow: 0 0 0 3px rgba(204,78,58,.08); }
-.death-date-reveal input { animation: death-date-cue 950ms ease-in-out 3; }
+.death-date-reveal input { animation: death-date-cue 950ms ease-in-out infinite; }
 @keyframes death-date-cue {
   0%, 100% { border-color: rgba(167,185,210,.19); box-shadow: 0 0 0 0 rgba(200,131,85,0); }
   50% { border-color: rgba(200,131,85,.7); box-shadow: 0 0 0 3px rgba(200,131,85,.1), 0 0 18px rgba(200,131,85,.12); }

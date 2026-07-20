@@ -7,11 +7,13 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from 'react'
 import {
   bornValue,
   calculateAge,
   dateSortKey,
+  displayArchiveDate,
   displayValue,
   isSafeExternalUrl,
   portraitCandidates,
@@ -69,11 +71,17 @@ interface LineageGraphProps {
   petFamilies: PetFamilyUnit[]
 }
 
-interface TooltipState {
+interface HoverState {
   entity: Entity
   x: number
   y: number
-  pinned: boolean
+}
+
+interface PinnedPosition {
+  left: number
+  top: number
+  arrowLeft: number
+  placement: 'above' | 'below'
 }
 
 type Gesture =
@@ -277,24 +285,23 @@ function EntityCard({
   entity,
   owner,
   layoutSlot,
+  pinnedEntityId,
   onHover,
   onLeave,
-  onTouch,
+  onActivate,
 }: {
   entity: Entity
   owner?: Person
   layoutSlot?: number
+  pinnedEntityId: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
-  onTouch: (entity: Entity) => void
+  onActivate: (entity: Entity) => void
 }) {
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
-  const openLink = (link: string) => {
-    window.open(link, '_blank', 'noopener,noreferrer')
-  }
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.pointerType === 'touch' || event.pointerType === 'pen' || safeLinks.length !== 1) onTouch(entity)
-    else openLink(safeLinks[0])
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    onActivate(entity)
   }
   return (
     <button
@@ -302,7 +309,8 @@ function EntityCard({
       type="button"
       data-entity-id={entity.id}
       data-layout-slot={layoutSlot}
-      aria-label={`${displayValue(entity.displayName)} details${safeLinks.length === 1 ? ', opens story link' : safeLinks.length > 1 ? `, ${safeLinks.length} story links available` : ''}`}
+      aria-label={`${displayValue(entity.displayName)} details${safeLinks.length > 0 ? `, ${safeLinks.length} profile ${safeLinks.length === 1 ? 'link' : 'links'} available` : ''}`}
+      aria-expanded={pinnedEntityId === entity.id}
       onPointerEnter={(event) => onHover(entity, event.clientX, event.clientY)}
       onPointerMove={(event) => {
         if (event.pointerType === 'mouse') onHover(entity, event.clientX, event.clientY)
@@ -312,8 +320,7 @@ function EntityCard({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          if (safeLinks.length === 1) openLink(safeLinks[0])
-          else onTouch(entity)
+          onActivate(entity)
         }
       }}
     >
@@ -329,15 +336,36 @@ function EntityCard({
   )
 }
 
-function DetailPopover({ tooltip, people, today, onClose }: { tooltip: TooltipState; people: Person[]; today: Date; onClose: () => void }) {
-  const { entity, pinned } = tooltip
+function DetailPopover({
+  entity,
+  people,
+  today,
+  hover,
+  pinnedPosition,
+  popoverRef,
+}: {
+  entity: Entity
+  people: Person[]
+  today: Date
+  hover?: HoverState
+  pinnedPosition?: PinnedPosition | null
+  popoverRef?: RefObject<HTMLElement | null>
+}) {
+  const pinned = !hover
   const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
-  const left = Math.min(window.innerWidth - 254, Math.max(16, tooltip.x + 18))
-  const top = Math.min(window.innerHeight - 300, Math.max(82, tooltip.y + 18))
-  const style = pinned ? undefined : ({ left, top } as CSSProperties)
+  const left = hover ? Math.min(window.innerWidth - 254, Math.max(16, hover.x + 18)) : pinnedPosition?.left ?? 0
+  const top = hover ? Math.min(window.innerHeight - 300, Math.max(82, hover.y + 18)) : pinnedPosition?.top ?? 0
+  const style = pinned
+    ? ({
+        left,
+        top,
+        visibility: pinnedPosition ? 'visible' : 'hidden',
+        '--popover-arrow-left': `${pinnedPosition?.arrowLeft ?? 32}px`,
+      } as CSSProperties)
+    : ({ left, top } as CSSProperties)
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
   const age = calculateAge(entity.birthDate, today, entity.deathDate, entity.status, isPet(entity))
-  const diedRows = entity.status === 'dead' ? [['Died', displayValue(entity.deathDate)]] : []
+  const diedRows = entity.status === 'dead' ? [['Died', displayArchiveDate(entity.deathDate)]] : []
   const rows = isPet(entity)
     ? [
         ['Species', displayValue(entity.species)],
@@ -360,8 +388,13 @@ function DetailPopover({ tooltip, people, today, onClose }: { tooltip: TooltipSt
       ]
 
   return (
-    <aside className={`detail-popover ${pinned ? 'detail-pinned' : ''}`} style={style} role="dialog" aria-label={`${entity.displayName} details`}>
-      {pinned && <button className="popover-close" type="button" onClick={onClose} aria-label="Close details">×</button>}
+    <aside
+      className={`detail-popover ${pinned ? `detail-pinned is-${pinnedPosition?.placement ?? 'above'}` : 'detail-hover'}`}
+      style={style}
+      role={pinned ? 'dialog' : 'tooltip'}
+      aria-label={`${entity.displayName} details`}
+      ref={popoverRef}
+    >
       <span className="portrait-number" aria-label={`Portrait number ${entity.portraitNumber}`}>{entity.portraitNumber}</span>
       <span className="popover-kicker">{displayValue(entity.relationshipLabel)}</span>
       <h3>{displayValue(entity.displayName)}</h3>
@@ -389,18 +422,20 @@ function LineageBranch({
   groupByEntity,
   people,
   path,
+  pinnedEntityId,
   onHover,
   onLeave,
-  onTouch,
+  onActivate,
 }: {
   entityId: string
   entities: Map<string, Entity>
   groupByEntity: Map<string, PartnerGroup>
   people: Person[]
   path: Set<string>
+  pinnedEntityId: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
-  onTouch: (entity: Entity) => void
+  onActivate: (entity: Entity) => void
 }) {
   const entity = entities.get(entityId)
   if (!entity) return null
@@ -410,7 +445,7 @@ function LineageBranch({
     return (
       <div className="lineage-branch">
         <div className="partner-group-row">
-          <EntityCard entity={entity} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+          <EntityCard entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         </div>
       </div>
     )
@@ -433,7 +468,7 @@ function LineageBranch({
           const groupEntity = entities.get(groupEntityId)
           if (!groupEntity) return null
           const owner = isPet(groupEntity) ? people.find((person) => person.id === groupEntity.ownerPersonId) : undefined
-          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         })}
       </div>
       {group.families.length > 0 && (
@@ -451,9 +486,10 @@ function LineageBranch({
                       groupByEntity={groupByEntity}
                       people={people}
                       path={nextPath}
+                      pinnedEntityId={pinnedEntityId}
                       onHover={onHover}
                       onLeave={onLeave}
-                      onTouch={onTouch}
+                      onActivate={onActivate}
                     />
                   ))}
                 </div>
@@ -471,17 +507,19 @@ function PetYearTimeline({
   speciesColumns,
   families,
   people,
+  pinnedEntityId,
   onHover,
   onLeave,
-  onTouch,
+  onActivate,
 }: {
   bands: PetYearBand[]
   speciesColumns: PetSpeciesColumn[]
   families: NormalizedFamily[]
   people: Person[]
+  pinnedEntityId: string | null
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
-  onTouch: (entity: Entity) => void
+  onActivate: (entity: Entity) => void
 }) {
   const gridStyle = { gridTemplateColumns: `96px ${speciesColumns.map((column) => `${column.width}px`).join(' ')}` } as CSSProperties
   return (
@@ -495,7 +533,7 @@ function PetYearTimeline({
             <div className="pet-species-year-cell" data-pet-species={column.key} key={column.key}>
               {band.pets.filter((pet) => petSpeciesKey(pet) === column.key).map((pet) => {
                 const owner = people.find((person) => person.id === pet.ownerPersonId)
-                return <EntityCard key={pet.id} entity={pet} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+                return <EntityCard key={pet.id} entity={pet} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
               })}
             </div>
           ))}
@@ -512,13 +550,16 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const currentDate = useCurrentDate()
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const pinnedPopoverRef = useRef<HTMLElement>(null)
   const activePointers = useRef(new Map<number, { x: number; y: number }>())
   const gestureRef = useRef<Gesture | null>(null)
   const wheelTimer = useRef<number | null>(null)
   const [view, setView] = useState<ViewState>({ x: 24, y: 24, scale: 0.82 })
   const viewRef = useRef(view)
   const [paths, setPaths] = useState<ConnectorPath[]>([])
-  const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const [hover, setHover] = useState<HoverState | null>(null)
+  const [pinnedEntityId, setPinnedEntityId] = useState<string | null>(null)
+  const [pinnedPosition, setPinnedPosition] = useState<PinnedPosition | null>(null)
   const [interacting, setInteracting] = useState(false)
   useEffect(() => { viewRef.current = view }, [view])
 
@@ -526,6 +567,7 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     () => new Map((mode === 'people' ? people : pets).map((entity) => [entity.id, entity])),
     [mode, people, pets],
   )
+  const pinnedEntity = pinnedEntityId ? entities.get(pinnedEntityId) : undefined
   const normalizedFamilies = useMemo<NormalizedFamily[]>(
     () => mode === 'people'
       ? families.map((family) => ({ id: family.id, parentIds: family.parentIds, children: family.children.map((child) => ({ entityId: child.personId, birthOrder: child.birthOrder })) }))
@@ -559,6 +601,42 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
   const canvasWidth = mode === 'pets'
     ? Math.max(1160, petTimelineWidth)
     : Math.max(1160, branchUnits * 174 + Math.max(0, rootGroups.length - 1) * 32)
+
+  const measurePinnedPopover = useCallback(() => {
+    const viewport = viewportRef.current
+    const canvas = canvasRef.current
+    const popover = pinnedPopoverRef.current
+    if (!viewport || !canvas || !popover || !pinnedEntityId) return
+    const card = [...canvas.querySelectorAll<HTMLElement>('[data-entity-id]')]
+      .find((candidate) => candidate.dataset.entityId === pinnedEntityId)
+    if (!card) return
+    const portrait = card.querySelector<HTMLElement>('.portrait-ring') ?? card
+    const viewportRect = viewport.getBoundingClientRect()
+    const portraitRect = portrait.getBoundingClientRect()
+    const width = popover.offsetWidth
+    const height = popover.offsetHeight
+    if (!width || !height) return
+
+    const anchorX = portraitRect.left - viewportRect.left + portraitRect.width / 2
+    const anchorTop = portraitRect.top - viewportRect.top
+    const anchorBottom = portraitRect.bottom - viewportRect.top
+    const gap = 17
+    const placement: PinnedPosition['placement'] = anchorTop >= height + gap + 8 ? 'above' : 'below'
+    const maximumLeft = Math.max(8, viewport.clientWidth - width - 8)
+    const left = Math.min(maximumLeft, Math.max(8, anchorX - width / 2))
+    const maximumTop = Math.max(8, viewport.clientHeight - height - 8)
+    const desiredTop = placement === 'above' ? anchorTop - height - gap : anchorBottom + gap
+    const top = Math.min(maximumTop, Math.max(8, desiredTop))
+    const arrowLeft = Math.min(width - 22, Math.max(22, anchorX - left))
+    const next = { left, top, arrowLeft, placement }
+    setPinnedPosition((current) => current
+      && Math.abs(current.left - next.left) < 0.5
+      && Math.abs(current.top - next.top) < 0.5
+      && Math.abs(current.arrowLeft - next.arrowLeft) < 0.5
+      && current.placement === next.placement
+      ? current
+      : next)
+  }, [pinnedEntityId])
 
   const measureConnectors = useCallback(() => {
     const canvas = canvasRef.current
@@ -671,6 +749,15 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
     if (canvasRef.current) observer.observe(canvasRef.current)
     return () => { cancelAnimationFrame(frame); observer.disconnect() }
   }, [measureConnectors, entities])
+
+  useLayoutEffect(() => {
+    if (!pinnedEntityId) return
+    const frame = requestAnimationFrame(measurePinnedPopover)
+    const observer = new ResizeObserver(() => requestAnimationFrame(measurePinnedPopover))
+    if (viewportRef.current) observer.observe(viewportRef.current)
+    if (pinnedPopoverRef.current) observer.observe(pinnedPopoverRef.current)
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
+  }, [entities, measurePinnedPopover, paths, pinnedEntityId, view])
 
   const resetView = useCallback(() => {
     const viewport = viewportRef.current
@@ -787,9 +874,12 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
       setInteracting(false)
     }
   }
-  const onHover = (entity: Entity, x: number, y: number) => setTooltip((current) => current?.pinned ? current : { entity, x, y, pinned: false })
-  const onLeave = () => setTooltip((current) => current?.pinned ? current : null)
-  const onTouch = (entity: Entity) => setTooltip({ entity, x: window.innerWidth / 2, y: window.innerHeight / 2, pinned: true })
+  const onHover = (entity: Entity, x: number, y: number) => setHover({ entity, x, y })
+  const onLeave = () => setHover(null)
+  const onActivate = (entity: Entity) => {
+    setPinnedPosition(null)
+    setPinnedEntityId((current) => current === entity.id ? null : entity.id)
+  }
 
   if (entities.size === 0) {
     return <div className="empty-lineage"><span className="empty-orbit" aria-hidden="true">✦</span><h2>No pets have been added yet</h2><p>Log in to the dashboard to add pets, owners, and lineage connections.</p></div>
@@ -840,10 +930,10 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
             ))}
           </svg>
           {mode === 'pets' ? (
-            <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+            <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
           ) : (
             <div className="root-forest">
-              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />)}
+              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />)}
             </div>
           )}
           {mode === 'people' && standalone.length > 0 && (
@@ -852,14 +942,25 @@ export function LineageGraph({ mode, people, families, pets, petFamilies }: Line
                 const entity = entities.get(id)
                 if (!entity) return null
                 const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
-                return <EntityCard key={id} entity={entity} owner={owner} onHover={onHover} onLeave={onLeave} onTouch={onTouch} />
+                return <EntityCard key={id} entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
               })}
             </div>
           )}
         </div>
+        {pinnedEntity && (
+          <DetailPopover
+            entity={pinnedEntity}
+            people={people}
+            today={currentDate}
+            pinnedPosition={pinnedPosition}
+            popoverRef={pinnedPopoverRef}
+          />
+        )}
       </div>
-      <p className="graph-help">Hover for details · Select a portrait to open its story when a link exists</p>
-      {tooltip && <DetailPopover tooltip={tooltip} people={people} today={currentDate} onClose={() => setTooltip(null)} />}
+      <p className="graph-help">Hover for quick details · Select a portrait for its full profile and links</p>
+      {hover && hover.entity.id !== pinnedEntityId && (
+        <DetailPopover entity={hover.entity} people={people} today={currentDate} hover={hover} />
+      )}
     </section>
   )
 }

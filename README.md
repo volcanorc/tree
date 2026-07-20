@@ -11,7 +11,7 @@ A responsive, data-driven family and pet lineage website built with React, TypeS
 - Twelve editable grandchildren with the seeded distribution `4 / 2 / 2 / 2 / 2 / 0 / 0`.
 - Multiple partner unions with children assigned to the correct partnership.
 - An independent pet archive with the protected Iring Brown founder, chronological birth-year rows, optional human owners, pet partners, and offspring.
-- Hover detail cards, touch detail panels, multiple safe story links, conditional death dates, missing-value fallbacks, and calculated ages.
+- Hover detail cards, portrait-anchored profile callouts, multiple safe story links, conditional death dates, missing-value fallbacks, and calculated ages.
 - A session-only local admin dashboard with validation, live preview, import, copy, download, reset, and draft recovery.
 - Automated GitHub Pages deployment through GitHub Actions.
 
@@ -59,7 +59,9 @@ People and pets have independent portrait-number namespaces. Automatic paths are
 
 Version-1 through version-4 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 5. Legacy `ageOverride` values are removed because age is now always calculated.
 
-People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, including month-name input such as `2020-March` or `2020-Mar-15`; month names normalize to numeric form when the field loses focus. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. The Death date editor is highlighted when it appears and is cleared when a record changes back to Alive.
+People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept two- or four-digit years with optional month and day values, including numeric months, month names, abbreviations, and unambiguous close misspellings such as `12-decamber-9`. Two-digit years expand into the 2000s, and valid pet dates normalize on blur to readable values such as `2012-dec-9`. Ambiguous month fragments remain invalid. Public profile cards display full English month names. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. An empty Death date editor pulses until it receives focus and is cleared when a record changes back to Alive.
+
+Selecting any portrait toggles a profile callout anchored to that portrait inside the graph. Portraits never navigate directly; safe URLs appear as numbered `Visit` buttons in the callout. The selected callout persists while the map pans or zooms, while hovering another portrait can still show its quick details.
 
 ## Ordering rules
 

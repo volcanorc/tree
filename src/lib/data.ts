@@ -69,12 +69,18 @@ export interface ParsedArchiveDate {
   canonical: string
 }
 
-const MONTH_NAMES = new Map([
-  ['january', 1], ['jan', 1], ['february', 2], ['feb', 2], ['march', 3], ['mar', 3],
-  ['april', 4], ['apr', 4], ['may', 5], ['june', 6], ['jun', 6], ['july', 7], ['jul', 7],
-  ['august', 8], ['aug', 8], ['september', 9], ['sep', 9], ['sept', 9], ['october', 10], ['oct', 10],
-  ['november', 11], ['nov', 11], ['december', 12], ['dec', 12],
-])
+const MONTH_FULL_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+] as const
+const MONTH_SHORT_NAMES = [
+  'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+  'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+] as const
+const MONTH_NAMES = new Map<string, number>()
+MONTH_FULL_NAMES.forEach((name, index) => MONTH_NAMES.set(name, index + 1))
+MONTH_SHORT_NAMES.forEach((name, index) => MONTH_NAMES.set(name, index + 1))
+MONTH_NAMES.set('sept', 9)
 
 function daysInMonth(year: number, month: number): number {
   if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
@@ -88,19 +94,82 @@ function localDateParts(date: Date): ParsedArchiveDate {
   return { year, month, day, precision: 'day', canonical: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` }
 }
 
+function damerauLevenshtein(left: string, right: string): number {
+  const rows = left.length + 1
+  const columns = right.length + 1
+  const matrix = Array.from({ length: rows }, () => Array<number>(columns).fill(0))
+  for (let row = 0; row < rows; row += 1) matrix[row][0] = row
+  for (let column = 0; column < columns; column += 1) matrix[0][column] = column
+
+  for (let row = 1; row < rows; row += 1) {
+    for (let column = 1; column < columns; column += 1) {
+      const substitutionCost = left[row - 1] === right[column - 1] ? 0 : 1
+      matrix[row][column] = Math.min(
+        matrix[row - 1][column] + 1,
+        matrix[row][column - 1] + 1,
+        matrix[row - 1][column - 1] + substitutionCost,
+      )
+      if (
+        row > 1
+        && column > 1
+        && left[row - 1] === right[column - 2]
+        && left[row - 2] === right[column - 1]
+      ) {
+        matrix[row][column] = Math.min(matrix[row][column], matrix[row - 2][column - 2] + 1)
+      }
+    }
+  }
+  return matrix[left.length][right.length]
+}
+
+function resolveMonth(value: string): number | null {
+  if (/^\d{1,2}$/.test(value)) {
+    const numeric = Number(value)
+    return numeric >= 1 && numeric <= 12 ? numeric : null
+  }
+  if (!/^[a-z]+$/.test(value)) return null
+  const exact = MONTH_NAMES.get(value)
+  if (exact) return exact
+
+  if (value.length === 2) {
+    const prefixMatches = MONTH_FULL_NAMES
+      .map((name, index) => ({ name, month: index + 1 }))
+      .filter(({ name }) => name.startsWith(value))
+    return prefixMatches.length === 1 ? prefixMatches[0].month : null
+  }
+  if (value.length < 3 || value.length > 11) return null
+
+  const maximumDistance = value.length <= 4 ? 1 : 2
+  const ranked = MONTH_FULL_NAMES
+    .map((name, index) => ({ month: index + 1, distance: damerauLevenshtein(value, name) }))
+    .sort((left, right) => left.distance - right.distance)
+  if (ranked[0].distance > maximumDistance || ranked[0].distance === ranked[1].distance) return null
+  return ranked[0].month
+}
+
+function formatParsedArchiveDate(parsed: ParsedArchiveDate, monthStyle: 'short' | 'long'): string {
+  const year = String(parsed.year).padStart(4, '0')
+  if (parsed.precision === 'year') return year
+  const month = monthStyle === 'short' ? MONTH_SHORT_NAMES[parsed.month - 1] : MONTH_FULL_NAMES[parsed.month - 1]
+  if (parsed.precision === 'month') return `${year}-${month}`
+  return `${year}-${month}-${parsed.day}`
+}
+
 export function parseArchiveDate(value: string, allowPartial = false): ParsedArchiveDate | null {
   const parts = value.trim().toLowerCase().split('-')
-  if (!parts[0] || !/^\d{4}$/.test(parts[0]) || parts.length > 3) return null
-  const year = Number(parts[0])
+  const validYear = /^\d{4}$/.test(parts[0]) || (allowPartial && /^\d{2}$/.test(parts[0]))
+  if (!parts[0] || !validYear || parts.length > 3) return null
+  const year = parts[0].length === 2 ? 2000 + Number(parts[0]) : Number(parts[0])
+  const yearText = String(year).padStart(4, '0')
   if (year < 1) return null
   if (parts.length === 1) {
-    return allowPartial ? { year, month: 1, day: 1, precision: 'year', canonical: parts[0] } : null
+    return allowPartial ? { year, month: 1, day: 1, precision: 'year', canonical: yearText } : null
   }
-  const month = /^\d{1,2}$/.test(parts[1]) ? Number(parts[1]) : MONTH_NAMES.get(parts[1])
+  const month = allowPartial ? resolveMonth(parts[1]) : /^\d{1,2}$/.test(parts[1]) ? Number(parts[1]) : null
   if (!month || month < 1 || month > 12) return null
   if (parts.length === 2) {
     if (!allowPartial) return null
-    return { year, month, day: 1, precision: 'month', canonical: `${parts[0]}-${String(month).padStart(2, '0')}` }
+    return { year, month, day: 1, precision: 'month', canonical: `${yearText}-${String(month).padStart(2, '0')}` }
   }
   if (!/^\d{1,2}$/.test(parts[2])) return null
   const day = Number(parts[2])
@@ -110,12 +179,20 @@ export function parseArchiveDate(value: string, allowPartial = false): ParsedArc
     month,
     day,
     precision: 'day',
-    canonical: `${parts[0]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    canonical: `${yearText}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
   }
 }
 
 export function normalizeArchiveDate(value: string, allowPartial = false): string {
-  return parseArchiveDate(value, allowPartial)?.canonical ?? value.trim()
+  const parsed = parseArchiveDate(value, allowPartial)
+  if (!parsed) return value.trim()
+  return allowPartial ? formatParsedArchiveDate(parsed, 'short') : parsed.canonical
+}
+
+export function displayArchiveDate(value: string): string {
+  if (!value.trim()) return '?'
+  const parsed = parseArchiveDate(value, true)
+  return parsed ? formatParsedArchiveDate(parsed, 'long') : value.trim()
 }
 
 function compareDateParts(left: ParsedArchiveDate, right: ParsedArchiveDate): number {
@@ -141,7 +218,7 @@ export function dateSortKey(value: string): string {
 export function dateFieldError(value: string, allowPartial: boolean, today = new Date()): string {
   if (!value.trim()) return ''
   const parsed = parseArchiveDate(value, allowPartial)
-  if (!parsed) return allowPartial ? 'Use YYYY, YYYY-MM, or YYYY-MM-DD.' : 'Use YYYY-MM-DD.'
+  if (!parsed) return allowPartial ? 'Use YY or YYYY, optionally followed by a month and day.' : 'Use YYYY-MM-DD.'
   if (compareDateParts(parsed, localDateParts(today)) > 0) return 'Date cannot be in the future.'
   return ''
 }
@@ -203,7 +280,7 @@ export function portraitCandidates(entity: Pick<Person | Pet, 'portrait' | 'port
 }
 
 export function bornValue(entity: Pick<Person | Pet, 'birthDate' | 'birthDetails'>): string {
-  return displayValue(entity.birthDate || entity.birthDetails)
+  return entity.birthDate ? displayArchiveDate(entity.birthDate) : displayValue(entity.birthDetails)
 }
 
 function duplicateValues(values: string[]): string[] {
@@ -395,9 +472,9 @@ export function migrateTreeData(input: unknown): TreeData {
       species: stringValue(pet.species),
       breed: stringValue(pet.breed),
       gender: (pet.gender ?? 'unknown') as Gender,
-      birthDate: stringValue(pet.birthDate),
+      birthDate: normalizeArchiveDate(stringValue(pet.birthDate), true),
       birthDetails: stringValue(pet.birthDetails),
-      deathDate: stringValue(pet.deathDate),
+      deathDate: normalizeArchiveDate(stringValue(pet.deathDate), true),
       personality: stringValue(pet.personality),
       biography: stringValue(pet.biography),
       relationshipLabel: stringValue(pet.relationshipLabel),

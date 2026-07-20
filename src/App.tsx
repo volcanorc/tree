@@ -45,6 +45,7 @@ function ArchiveView({ data, view }: { data: TreeData; view: 'family' | 'pets' }
           </div>
         </div>
         <LineageGraph
+          key={isFamily ? 'family-graph' : 'pet-graph'}
           mode={isFamily ? 'people' : 'pets'}
           people={data.people}
           families={data.families}
