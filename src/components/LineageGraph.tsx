@@ -1365,6 +1365,8 @@ export function LineageGraph({
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
         onKeyDown={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest('input, select, textarea, [contenteditable="true"]')) return
           const movements: Record<string, { x: number; y: number }> = { ArrowLeft: { x: 44, y: 0 }, ArrowRight: { x: -44, y: 0 }, ArrowUp: { x: 0, y: 44 }, ArrowDown: { x: 0, y: -44 } }
           if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.15); return }
           if (event.key === '-') { event.preventDefault(); zoomBy(1 / 1.15); return }

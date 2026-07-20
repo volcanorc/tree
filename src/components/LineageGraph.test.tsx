@@ -467,6 +467,29 @@ describe('LineageGraph highlights and archive actions', () => {
     fireEvent.blur(birth)
     expect(petPatch).toHaveBeenCalledWith({ kind: 'pet', entityId: 'iring-brown', patch: { birthDate: '2002-dec-9' } })
   })
+
+  it('does not run map keyboard shortcuts while typing a year in the popup editor', () => {
+    const onEntityPatch = vi.fn(() => '')
+    renderGraph(fresh(), 'pets', { canEdit: true, onEditAction: vi.fn(), onEntityPatch })
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
+    const dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
+    fireEvent.click(within(dialog).getByLabelText('Edit birthDate'))
+    const birth = within(dialog).getByLabelText('Edit birthDate', { selector: 'input' })
+    const canvas = screen.getByTestId('lineage-canvas')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    const zoomedTransform = canvas.style.transform
+
+    fireEvent.keyDown(birth, { key: '2' })
+    fireEvent.keyDown(birth, { key: '0' })
+    fireEvent.keyDown(birth, { key: '0' })
+    fireEvent.keyDown(birth, { key: '2' })
+    fireEvent.keyDown(birth, { key: 'ArrowLeft' })
+    expect(canvas.style.transform).toBe(zoomedTransform)
+
+    fireEvent.change(birth, { target: { value: '2002' } })
+    fireEvent.blur(birth)
+    expect(onEntityPatch).toHaveBeenCalledWith({ kind: 'pet', entityId: 'iring-brown', patch: { birthDate: '2002' } })
+  })
 })
 
 describe('LineageGraph owner navigation', () => {
