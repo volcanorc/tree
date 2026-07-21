@@ -301,7 +301,7 @@ describe('LineageGraph family-line highlights', () => {
     expect(container.querySelector('[data-entity-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-role', 'member')
   })
 
-  it('shows a female-origin Tayad path for direct children only and isolates the second-wife branch', async () => {
+  it('shows a gender-neutral Tayad origin path for direct children only and isolates the second-partner branch', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
     fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'tayad' } })

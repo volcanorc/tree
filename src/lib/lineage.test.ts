@@ -81,8 +81,9 @@ describe('family-line inheritance and classification', () => {
     expect(result.continuingChildIds.has('grandchild-2-2')).toBe(true)
   })
 
-  it('shows a female lineage origin through direct children without transmitting to grandchildren or another wife', () => {
+  it.each(['female', 'male', 'unknown'] as const)('shows a %s lineage origin through direct children without transmitting to grandchildren or another partner', (gender) => {
     const data = published()
+    data.people.find((person) => person.id === 'new-partner')!.gender = gender
     const directChild = data.people.find((person) => person.id === 'grandchild-1-2')!
     data.people.push({
       ...directChild,
@@ -99,7 +100,7 @@ describe('family-line inheritance and classification', () => {
     })
 
     const result = classifyFamilyLine(data.people, data.families, 'Tayad')
-    expect(result.femaleOriginIds).toEqual(new Set(['new-partner']))
+    expect(result.lineageOriginIds).toEqual(new Set(['new-partner']))
     expect(result.memberIds.has('new-partner')).toBe(true)
     expect(result.partnerIds.has('child-1')).toBe(true)
     expect(result.originChildIds).toEqual(new Set(['grandchild-1-2', 'grandchild-1-3', 'grandchild-1-4']))
@@ -108,6 +109,146 @@ describe('family-line inheritance and classification', () => {
     expect(result.continuingFamilyIds.has('tayad-descendant-family')).toBe(false)
     expect(result.memberIds.has('new-child')).toBe(false)
     expect(result.continuingFamilyIds.has('family-child-1-2')).toBe(false)
+  })
+
+  it('handles a same-gender Vidal origin for one generation without surname-specific logic', () => {
+    const data = published()
+    const sullanoParent = data.people.find((person) => person.id === 'child-1')!
+    const templatePartner = data.people.find((person) => person.id === 'new-partner')!
+    const templateChild = data.people.find((person) => person.id === 'grandchild-1-2')!
+    data.people.push(
+      {
+        ...templatePartner,
+        id: 'vidal-origin',
+        displayName: 'Marco Vidal',
+        lineageSurname: 'Vidal',
+        gender: 'male',
+        portraitNumber: 996,
+        portrait: 'portraits/996.png',
+      },
+      {
+        ...templateChild,
+        id: 'vidal-display-child',
+        displayName: 'Alex Sullano',
+        lineageSurname: 'Sullano',
+        gender: 'unknown',
+        portraitNumber: 997,
+        portrait: 'portraits/997.png',
+      },
+      {
+        ...templateChild,
+        id: 'vidal-grandchild',
+        displayName: 'Sam Santos',
+        lineageSurname: 'Santos',
+        gender: 'unknown',
+        portraitNumber: 998,
+        portrait: 'portraits/998.png',
+      },
+      {
+        ...templateChild,
+        id: 'vidal-line-child',
+        displayName: 'Jordan Vidal',
+        lineageSurname: 'Vidal',
+        gender: 'unknown',
+        portraitNumber: 991,
+        portrait: 'portraits/991.png',
+      },
+      {
+        ...templateChild,
+        id: 'vidal-line-grandchild',
+        displayName: 'Morgan Vidal',
+        lineageSurname: 'Vidal',
+        gender: 'unknown',
+        portraitNumber: 992,
+        portrait: 'portraits/992.png',
+      },
+    )
+    data.families.push(
+      {
+        id: 'vidal-origin-family',
+        parentIds: [sullanoParent.id, 'vidal-origin'],
+        children: [
+          { personId: 'vidal-display-child', birthOrder: 1 },
+          { personId: 'vidal-line-child', birthOrder: 2 },
+        ],
+      },
+      {
+        id: 'vidal-descendant-family',
+        parentIds: ['vidal-display-child'],
+        children: [{ personId: 'vidal-grandchild', birthOrder: 1 }],
+      },
+      {
+        id: 'vidal-line-descendant-family',
+        parentIds: ['vidal-line-child'],
+        children: [{ personId: 'vidal-line-grandchild', birthOrder: 1 }],
+      },
+    )
+
+    const result = classifyFamilyLine(data.people, data.families, 'Vidal')
+    expect(result.lineageOriginIds).toEqual(new Set(['vidal-origin']))
+    expect(result.memberIds.has('vidal-origin')).toBe(true)
+    expect(result.partnerIds.has(sullanoParent.id)).toBe(true)
+    expect(result.originChildIds).toEqual(new Set(['vidal-display-child']))
+    expect(result.memberIds.has('vidal-display-child')).toBe(true)
+    expect(result.continuingFamilyIds.has('vidal-origin-family')).toBe(true)
+    expect(result.memberIds.has('vidal-grandchild')).toBe(false)
+    expect(result.continuingFamilyIds.has('vidal-descendant-family')).toBe(false)
+    expect(result.originChildIds.has('vidal-line-child')).toBe(false)
+    expect(result.memberIds.has('vidal-line-child')).toBe(true)
+    expect(result.memberIds.has('vidal-line-grandchild')).toBe(true)
+    expect(result.continuingFamilyIds.has('vidal-line-descendant-family')).toBe(true)
+  })
+
+  it('applies the same one-generation rule to a standalone single-parent origin', () => {
+    const data = published()
+    const templateParent = data.people.find((person) => person.id === 'new-partner')!
+    const templateChild = data.people.find((person) => person.id === 'grandchild-1-2')!
+    data.people.push(
+      {
+        ...templateParent,
+        id: 'ortiz-origin',
+        displayName: 'Robin Ortiz',
+        lineageSurname: 'Ortiz',
+        gender: 'unknown',
+        portraitNumber: 993,
+        portrait: 'portraits/993.png',
+      },
+      {
+        ...templateChild,
+        id: 'ortiz-display-child',
+        displayName: 'Casey Sullano',
+        lineageSurname: 'Sullano',
+        portraitNumber: 994,
+        portrait: 'portraits/994.png',
+      },
+      {
+        ...templateChild,
+        id: 'ortiz-grandchild',
+        displayName: 'Taylor Santos',
+        lineageSurname: 'Santos',
+        portraitNumber: 995,
+        portrait: 'portraits/995.png',
+      },
+    )
+    data.families.push(
+      {
+        id: 'ortiz-origin-family',
+        parentIds: ['ortiz-origin'],
+        children: [{ personId: 'ortiz-display-child', birthOrder: 1 }],
+      },
+      {
+        id: 'ortiz-descendant-family',
+        parentIds: ['ortiz-display-child'],
+        children: [{ personId: 'ortiz-grandchild', birthOrder: 1 }],
+      },
+    )
+
+    const result = classifyFamilyLine(data.people, data.families, 'Ortiz')
+    expect(result.lineageOriginIds).toEqual(new Set(['ortiz-origin']))
+    expect(result.originChildIds).toEqual(new Set(['ortiz-display-child']))
+    expect(result.continuingFamilyIds.has('ortiz-origin-family')).toBe(true)
+    expect(result.memberIds.has('ortiz-grandchild')).toBe(false)
+    expect(result.continuingFamilyIds.has('ortiz-descendant-family')).toBe(false)
   })
 
   it('uses reached carriers, then a unique male, then stable parent order', () => {

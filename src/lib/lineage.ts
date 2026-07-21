@@ -80,7 +80,7 @@ export interface FamilyLineClassification {
   carrierByFamilyId: Map<string, string>
   continuingChildIds: Set<string>
   continuingFamilyIds: Set<string>
-  femaleOriginIds: Set<string>
+  lineageOriginIds: Set<string>
   originChildIds: Set<string>
 }
 
@@ -114,7 +114,7 @@ export function classifyFamilyLine(
 
   const continuingChildIds = new Set<string>()
   const continuingFamilyIds = new Set<string>()
-  const femaleOriginIds = new Set<string>()
+  const lineageOriginIds = new Set<string>()
   const originChildIds = new Set<string>()
   const partnerCandidates = new Set<string>()
   carrierByFamilyId.forEach((carrierId, familyId) => {
@@ -128,12 +128,10 @@ export function classifyFamilyLine(
       }
     })
     const matchingParents = family.parentIds.filter((id) => matchingIds.has(id))
-    const carrier = byId.get(carrierId)
-    const isFemaleOrigin = matchingParents.length === 1
-      && carrier?.gender === 'female'
+    const isLineageOrigin = matchingParents.length === 1
       && !reachedAsChild.has(carrierId)
-    if (isFemaleOrigin) {
-      femaleOriginIds.add(carrierId)
+    if (isLineageOrigin) {
+      lineageOriginIds.add(carrierId)
       family.children.forEach((child) => {
         if (matchingIds.has(child.personId)) return
         originChildIds.add(child.personId)
@@ -155,7 +153,7 @@ export function classifyFamilyLine(
     carrierByFamilyId,
     continuingChildIds,
     continuingFamilyIds,
-    femaleOriginIds,
+    lineageOriginIds,
     originChildIds,
   }
 }
