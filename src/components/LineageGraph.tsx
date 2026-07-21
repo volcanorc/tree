@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -97,6 +98,24 @@ interface LineageGraphProps {
 
 type ProfileHighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female'
 type FamilyLineProfileRole = 'member' | 'partner' | 'none'
+type HighlightPreview =
+  | { kind: 'profile'; value: ProfileHighlightFilter }
+  | { kind: 'lineage'; value: string }
+
+interface HighlightOption<Value extends string> {
+  value: Value
+  label: string
+}
+
+interface HighlightDropdownProps<Value extends string> {
+  label: string
+  ariaLabel?: string
+  value: Value
+  options: HighlightOption<Value>[]
+  disabled?: boolean
+  onPreview: (value: Value | null) => void
+  onCommit: (value: Value) => void
+}
 
 interface HoverState {
   entity: Entity
@@ -119,6 +138,165 @@ const MIN_SCALE = 0.25
 const MAX_SCALE = 2.5
 const TOUCH_HOLD_DELAY = 450
 const TOUCH_HOLD_MOVE_TOLERANCE = 10
+const PROFILE_HIGHLIGHT_OPTIONS: HighlightOption<ProfileHighlightFilter>[] = [
+  { value: 'set', label: 'Set' },
+  { value: 'dead', label: 'Dead' },
+  { value: 'alive', label: 'Alive' },
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+]
+
+function HighlightDropdown<Value extends string>({
+  label,
+  ariaLabel = label,
+  value,
+  options,
+  disabled = false,
+  onPreview,
+  onCommit,
+}: HighlightDropdownProps<Value>) {
+  const id = useId()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(() => Math.max(0, options.findIndex((option) => option.value === value)))
+  const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value))
+  const selectedLabel = options[selectedIndex]?.label ?? options[0]?.label ?? 'Set'
+
+  const closeMenu = useCallback((restoreFocus = false) => {
+    setOpen(false)
+    setActiveIndex(selectedIndex)
+    onPreview(null)
+    if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus())
+  }, [onPreview, selectedIndex])
+
+  useEffect(() => {
+    if (!open) return
+    const closeFromOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) closeMenu()
+    }
+    document.addEventListener('click', closeFromOutside)
+    return () => document.removeEventListener('click', closeFromOutside)
+  }, [closeMenu, open])
+
+  const previewOption = useCallback((index: number, focus = false) => {
+    const option = options[index]
+    if (!option) return
+    setActiveIndex(index)
+    onPreview(option.value)
+    if (focus) requestAnimationFrame(() => optionRefs.current[index]?.focus())
+  }, [onPreview, options])
+
+  const openForKeyboard = (index: number) => {
+    if (disabled) return
+    setOpen(true)
+    previewOption(index, true)
+  }
+
+  const commitOption = (option: HighlightOption<Value>) => {
+    onCommit(option.value)
+    setOpen(false)
+    setActiveIndex(options.findIndex((candidate) => candidate.value === option.value))
+    onPreview(null)
+    requestAnimationFrame(() => triggerRef.current?.focus())
+  }
+
+  const moveOptionFocus = (index: number, direction: 1 | -1) => {
+    const next = (index + direction + options.length) % options.length
+    previewOption(next, true)
+  }
+
+  return (
+    <div
+      className="highlight-filter"
+      ref={rootRef}
+      onBlur={(event) => {
+        if (open && !event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenu()
+      }}
+    >
+      <span className="highlight-filter-label" id={`${id}-label`}>{label}</span>
+      <button
+        type="button"
+        className="highlight-filter-trigger"
+        ref={triggerRef}
+        data-value={value}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={`${id}-listbox`}
+        disabled={disabled}
+        onClick={() => {
+          if (open) closeMenu()
+          else {
+            setActiveIndex(selectedIndex)
+            setOpen(true)
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && open) {
+            event.preventDefault()
+            closeMenu()
+          } else if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            openForKeyboard(open ? (activeIndex + 1) % options.length : (selectedIndex + 1) % options.length)
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            openForKeyboard(open ? (activeIndex - 1 + options.length) % options.length : (selectedIndex - 1 + options.length) % options.length)
+          } else if ((event.key === 'Enter' || event.key === ' ') && !open) {
+            event.preventDefault()
+            openForKeyboard(selectedIndex)
+          }
+        }}
+      >
+        <span id={`${id}-value`}>{selectedLabel}</span>
+        <svg aria-hidden="true" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" /></svg>
+      </button>
+      {open && (
+        <div className="highlight-filter-list" id={`${id}-listbox`} role="listbox" aria-label={`${label} options`}>
+          {options.map((option, index) => (
+            <button
+              type="button"
+              role="option"
+              ref={(element) => { optionRefs.current[index] = element }}
+              className={`highlight-filter-option ${index === activeIndex ? 'is-previewed' : ''}`}
+              aria-selected={option.value === value}
+              key={option.value}
+              tabIndex={-1}
+              onMouseEnter={() => previewOption(index)}
+              onFocus={() => previewOption(index)}
+              onClick={() => commitOption(option)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  moveOptionFocus(index, 1)
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  moveOptionFocus(index, -1)
+                } else if (event.key === 'Home') {
+                  event.preventDefault()
+                  previewOption(0, true)
+                } else if (event.key === 'End') {
+                  event.preventDefault()
+                  previewOption(options.length - 1, true)
+                } else if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  commitOption(option)
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  closeMenu(true)
+                }
+              }}
+            >
+              <span>{option.label}</span>
+              {option.value === value && <span className="highlight-filter-check" aria-hidden="true">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function clampScale(value: number) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value))
@@ -1035,6 +1213,7 @@ export function LineageGraph({
   const [dismissedFocusRequestId, setDismissedFocusRequestId] = useState<number | null>(null)
   const [profileHighlightFilter, setProfileHighlightFilter] = useState<ProfileHighlightFilter>('set')
   const [lineagePathFilter, setLineagePathFilter] = useState('set')
+  const [highlightPreview, setHighlightPreview] = useState<HighlightPreview | null>(null)
   useEffect(() => { viewRef.current = view }, [view])
 
   useEffect(() => {
@@ -1063,7 +1242,17 @@ export function LineageGraph({
     [mode, families, petFamilies],
   )
   const availableFamilyLines = useMemo(() => mode === 'people' ? familyLineOptions(people) : [], [mode, people])
-  const selectedFamilyLine = lineagePathFilter === 'set' ? '' : lineagePathFilter
+  const lineageHighlightOptions = useMemo<HighlightOption<string>[]>(() => [
+    { value: 'set', label: 'Set' },
+    ...availableFamilyLines.map((option) => ({ value: option.key, label: option.label })),
+  ], [availableFamilyLines])
+  const effectiveProfileHighlight = highlightPreview?.kind === 'profile'
+    ? highlightPreview.value
+    : highlightPreview?.kind === 'lineage' ? 'set' : profileHighlightFilter
+  const effectiveLineagePath = highlightPreview?.kind === 'lineage'
+    ? highlightPreview.value
+    : highlightPreview?.kind === 'profile' ? 'set' : lineagePathFilter
+  const selectedFamilyLine = effectiveLineagePath === 'set' ? '' : effectiveLineagePath
   const familyLineClassification = useMemo<FamilyLineClassification | null>(
     () => mode === 'people' && selectedFamilyLine
       ? classifyFamilyLine(people, families, selectedFamilyLine)
@@ -1481,7 +1670,7 @@ export function LineageGraph({
   }
 
   return (
-    <section className={`lineage-section ${selectedFamilyLine ? 'highlight-lineage' : `highlight-${profileHighlightFilter}`}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
+    <section className={`lineage-section ${selectedFamilyLine ? 'highlight-lineage' : `highlight-${effectiveProfileHighlight}`}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
       <div className="graph-toolbar">
         <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
@@ -1504,7 +1693,7 @@ export function LineageGraph({
         onKeyDown={(event) => {
           if (interactionLocked) return
           const target = event.target as HTMLElement
-          if (target.closest('input, select, textarea, [contenteditable="true"]')) return
+          if (target.closest('.highlight-control, input, select, textarea, [contenteditable="true"]')) return
           const movements: Record<string, { x: number; y: number }> = { ArrowLeft: { x: 44, y: 0 }, ArrowRight: { x: -44, y: 0 }, ArrowUp: { x: 0, y: 44 }, ArrowDown: { x: 0, y: -44 } }
           if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.15); return }
           if (event.key === '-') { event.preventDefault(); zoomBy(1 / 1.15); return }
@@ -1515,46 +1704,38 @@ export function LineageGraph({
           setView((current) => ({ ...current, x: current.x + movement.x, y: current.y + movement.y }))
         }}
       >
-        <div className="highlight-control" aria-hidden={interactionLocked || undefined} onPointerDown={(event) => event.stopPropagation()}>
+        <div
+          className="highlight-control"
+          aria-hidden={interactionLocked || undefined}
+          inert={interactionLocked || undefined}
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <span className="highlight-control-title">Highlight</span>
-          <label>
-            <span>Status &amp; gender</span>
-            <select
-              value={profileHighlightFilter}
-              onChange={(event) => {
-                const value = event.target.value as ProfileHighlightFilter
-                setProfileHighlightFilter(value)
-                if (value !== 'set') setLineagePathFilter('set')
-              }}
-              aria-label="Status and gender highlight"
-              disabled={interactionLocked}
-            >
-              <option value="set">Set</option>
-              <option value="dead">Dead</option>
-              <option value="alive">Alive</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
-            </select>
-          </label>
+          <HighlightDropdown
+            label="Status & gender"
+            ariaLabel="Status and gender highlight"
+            value={profileHighlightFilter}
+            options={PROFILE_HIGHLIGHT_OPTIONS}
+            disabled={interactionLocked}
+            onPreview={(value) => setHighlightPreview(value === null ? null : { kind: 'profile', value })}
+            onCommit={(value) => {
+              setProfileHighlightFilter(value)
+              if (value !== 'set') setLineagePathFilter('set')
+            }}
+          />
           {mode === 'people' && availableFamilyLines.length > 0 && (
-            <label>
-              <span>Lineage path</span>
-              <select
-                value={lineagePathFilter}
-                onChange={(event) => {
-                  const value = event.target.value
-                  setLineagePathFilter(value)
-                  if (value !== 'set') setProfileHighlightFilter('set')
-                }}
-                aria-label="Lineage path"
-                disabled={interactionLocked}
-              >
-                <option value="set">Set</option>
-                {availableFamilyLines.map((option) => (
-                  <option value={option.key} key={option.key}>{option.label}</option>
-                ))}
-              </select>
-            </label>
+            <HighlightDropdown
+              label="Lineage path"
+              value={lineagePathFilter}
+              options={lineageHighlightOptions}
+              disabled={interactionLocked}
+              onPreview={(value) => setHighlightPreview(value === null ? null : { kind: 'lineage', value })}
+              onCommit={(value) => {
+                setLineagePathFilter(value)
+                if (value !== 'set') setProfileHighlightFilter('set')
+              }}
+            />
           )}
         </div>
         <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} inert={interactionLocked || undefined} aria-hidden={interactionLocked || undefined} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>

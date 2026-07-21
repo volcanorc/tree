@@ -39,6 +39,17 @@ function renderGraph(
   )
 }
 
+function highlightTrigger(label: 'Status and gender highlight' | 'Lineage path') {
+  return screen.getByRole('button', { name: label })
+}
+
+function commitHighlight(label: 'Status and gender highlight' | 'Lineage path', option: string) {
+  const trigger = highlightTrigger(label)
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('option', { name: option }))
+  return trigger
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -232,10 +243,13 @@ describe('LineageGraph family-line highlights', () => {
   it('offers separate alphabetical people-only lineage paths and explains the selected profile line', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { unmount } = renderGraph(data)
-    const profileSelect = screen.getByRole('combobox', { name: 'Status and gender highlight' })
-    const lineageSelect = screen.getByRole('combobox', { name: 'Lineage path' })
-    expect(within(profileSelect).getAllByRole('option').map((option) => option.textContent)).toEqual(['Set', 'Dead', 'Alive', 'Male', 'Female'])
-    expect(within(lineageSelect).getAllByRole('option').map((option) => option.textContent)).toEqual([
+    const profileTrigger = highlightTrigger('Status and gender highlight')
+    const lineageTrigger = highlightTrigger('Lineage path')
+    fireEvent.click(profileTrigger)
+    expect(within(screen.getByRole('listbox', { name: 'Status & gender options' })).getAllByRole('option').map((option) => option.textContent?.replace('✓', ''))).toEqual(['Set', 'Dead', 'Alive', 'Male', 'Female'])
+    fireEvent.keyDown(profileTrigger, { key: 'Escape' })
+    fireEvent.click(lineageTrigger)
+    expect(within(screen.getByRole('listbox', { name: 'Lineage path options' })).getAllByRole('option').map((option) => option.textContent?.replace('✓', ''))).toEqual([
       'Set', 'Bering', 'Castaneda', 'Ermac', 'Sullano', 'Tayad',
     ])
     fireEvent.pointerUp(screen.getByRole('button', { name: /Nemisio Sullano details/i }), { pointerType: 'mouse', button: 0 })
@@ -243,39 +257,201 @@ describe('LineageGraph family-line highlights', () => {
 
     unmount()
     renderGraph(data, 'pets')
-    expect(screen.getByRole('combobox', { name: 'Status and gender highlight' })).toBeInTheDocument()
-    expect(screen.queryByRole('combobox', { name: 'Lineage path' })).not.toBeInTheDocument()
+    expect(highlightTrigger('Status and gender highlight')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Lineage path' })).not.toBeInTheDocument()
   })
 
   it('keeps profile and lineage filters mutually exclusive without coupling their Set choices', () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    const profileSelect = screen.getByRole('combobox', { name: 'Status and gender highlight' })
-    const lineageSelect = screen.getByRole('combobox', { name: 'Lineage path' })
+    const profileTrigger = highlightTrigger('Status and gender highlight')
+    const lineageTrigger = highlightTrigger('Lineage path')
 
-    fireEvent.change(profileSelect, { target: { value: 'male' } })
-    expect(profileSelect).toHaveValue('male')
-    expect(lineageSelect).toHaveValue('set')
-    fireEvent.change(lineageSelect, { target: { value: 'set' } })
-    expect(profileSelect).toHaveValue('male')
+    commitHighlight('Status and gender highlight', 'Male')
+    expect(profileTrigger).toHaveAttribute('data-value', 'male')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'set')
+    commitHighlight('Lineage path', 'Set')
+    expect(profileTrigger).toHaveAttribute('data-value', 'male')
 
-    fireEvent.change(lineageSelect, { target: { value: 'sullano' } })
-    expect(profileSelect).toHaveValue('set')
-    expect(lineageSelect).toHaveValue('sullano')
+    commitHighlight('Lineage path', 'Sullano')
+    expect(profileTrigger).toHaveAttribute('data-value', 'set')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'sullano')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-lineage')
-    fireEvent.change(profileSelect, { target: { value: 'set' } })
-    expect(lineageSelect).toHaveValue('sullano')
+    commitHighlight('Status and gender highlight', 'Set')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'sullano')
 
-    fireEvent.change(profileSelect, { target: { value: 'female' } })
-    expect(profileSelect).toHaveValue('female')
-    expect(lineageSelect).toHaveValue('set')
+    commitHighlight('Status and gender highlight', 'Female')
+    expect(profileTrigger).toHaveAttribute('data-value', 'female')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'set')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+  })
+
+  it('keeps the latest status preview after mouse leave, restores on outside click, and commits only on option click', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const trigger = highlightTrigger('Status and gender highlight')
+
+    fireEvent.click(trigger)
+    const dead = screen.getByRole('option', { name: 'Dead' })
+    fireEvent.mouseEnter(dead)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(trigger).toHaveAttribute('data-value', 'set')
+
+    fireEvent.mouseLeave(trigger.closest('.highlight-filter')!)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(screen.getByRole('listbox', { name: 'Status & gender options' })).toBeInTheDocument()
+    expect(trigger).toHaveAttribute('data-value', 'set')
+
+    fireEvent.click(document.body)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
+    expect(screen.queryByRole('listbox', { name: 'Status & gender options' })).not.toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    const alive = screen.getByRole('option', { name: 'Alive' })
+    fireEvent.mouseEnter(alive)
+    fireEvent.click(alive)
+    expect(trigger).toHaveAttribute('data-value', 'alive')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-alive')
+  })
+
+  it('restores the previous committed status after a different persistent hover preview is dismissed', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const trigger = commitHighlight('Status and gender highlight', 'Female')
+
+    fireEvent.click(trigger)
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Male' }))
+    fireEvent.mouseLeave(trigger.closest('.highlight-filter')!)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
+    expect(trigger).toHaveAttribute('data-value', 'female')
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(document.body)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+    expect(trigger).toHaveAttribute('data-value', 'female')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('temporarily suspends the other filter during preview and resets it only after commit', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const profileTrigger = commitHighlight('Status and gender highlight', 'Male')
+    const lineageTrigger = highlightTrigger('Lineage path')
+
+    fireEvent.click(lineageTrigger)
+    const sullano = screen.getByRole('option', { name: 'Sullano' })
+    fireEvent.mouseEnter(sullano)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-lineage')
+    expect(profileTrigger).toHaveAttribute('data-value', 'male')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'set')
+
+    fireEvent.mouseLeave(lineageTrigger.closest('.highlight-filter')!)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-lineage')
+    expect(screen.getByRole('listbox', { name: 'Lineage path options' })).toBeInTheDocument()
+    expect(lineageTrigger).toHaveAttribute('data-value', 'set')
+
+    fireEvent.click(document.body)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
+    expect(profileTrigger).toHaveAttribute('data-value', 'male')
+
+    fireEvent.click(lineageTrigger)
+    const reopenedSullano = screen.getByRole('option', { name: 'Sullano' })
+    fireEvent.mouseEnter(reopenedSullano)
+    fireEvent.click(reopenedSullano)
+    expect(profileTrigger).toHaveAttribute('data-value', 'set')
+    expect(lineageTrigger).toHaveAttribute('data-value', 'sullano')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-lineage')
+  })
+
+  it('restores a committed lineage path after previewing another path outside the menu', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const lineageTrigger = commitHighlight('Lineage path', 'Sullano')
+
+    fireEvent.click(lineageTrigger)
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Bering' }))
+    fireEvent.mouseLeave(lineageTrigger.closest('.highlight-filter')!)
+    expect(lineageTrigger).toHaveAttribute('data-value', 'sullano')
+    expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'member')
+
+    fireEvent.click(document.body)
+    expect(lineageTrigger).toHaveAttribute('data-value', 'sullano')
+    expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'partner')
+    expect(screen.queryByRole('listbox', { name: 'Lineage path options' })).not.toBeInTheDocument()
+  })
+
+  it('dismisses one preview before opening the other filter', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const profileTrigger = commitHighlight('Status and gender highlight', 'Female')
+    const lineageTrigger = highlightTrigger('Lineage path')
+
+    fireEvent.click(profileTrigger)
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Male' }))
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
+
+    fireEvent.click(lineageTrigger)
+    expect(profileTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(lineageTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+  })
+
+  it('supports keyboard preview, Escape restoration, Enter commit, and outside dismissal', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const trigger = highlightTrigger('Status and gender highlight')
+    const canvas = screen.getByTestId('lineage-canvas')
+    const transformBeforeFilterKeys = canvas.style.transform
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const dead = screen.getByRole('option', { name: 'Dead' })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(canvas.style.transform).toBe(transformBeforeFilterKeys)
+    fireEvent.keyDown(dead, { key: 'Escape' })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(screen.getByRole('option', { name: 'Dead' }), { key: 'Enter' })
+    expect(trigger).toHaveAttribute('data-value', 'dead')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+
+    fireEvent.click(trigger)
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Alive' }))
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-alive')
+    fireEvent.click(document.body)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(trigger).toHaveAttribute('data-value', 'dead')
+  })
+
+  it('restores a preview on Tab and commits touch selections without hover', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const trigger = highlightTrigger('Status and gender highlight')
+
+    fireEvent.click(trigger)
+    const female = screen.getByRole('option', { name: 'Female' })
+    fireEvent.focus(female)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
+    fireEvent.blur(female, { relatedTarget: screen.getByRole('button', { name: 'Zoom in' }) })
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
+
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('option', { name: 'Male' }), { pointerType: 'touch' })
+    expect(trigger).toHaveAttribute('data-value', 'male')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
+
+    fireEvent.keyDown(trigger, { key: ' ' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.keyDown(screen.getByRole('option', { name: 'Male' }), { key: ' ' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveAttribute('data-value', 'male')
   })
 
   it('classifies Sullano members, introduced partners, stopped branches, and split connectors', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'sullano' } })
+    commitHighlight('Lineage path', 'Sullano')
 
     expect(container.querySelector('[data-entity-id="father"]')).toHaveAttribute('data-lineage-role', 'member')
     expect(container.querySelector('[data-entity-id="mother"]')).toHaveAttribute('data-lineage-role', 'partner')
@@ -295,7 +471,7 @@ describe('LineageGraph family-line highlights', () => {
   it('reverse-filters Bering with its parent green and Sullano partner pink', () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'bering' } })
+    commitHighlight('Lineage path', 'Bering')
     expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'member')
     expect(container.querySelector('[data-entity-id="child-2"]')).toHaveAttribute('data-lineage-role', 'partner')
     expect(container.querySelector('[data-entity-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-role', 'member')
@@ -304,7 +480,7 @@ describe('LineageGraph family-line highlights', () => {
   it('shows a gender-neutral Tayad origin path for direct children only and isolates the second-partner branch', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'tayad' } })
+    commitHighlight('Lineage path', 'Tayad')
 
     expect(container.querySelector('[data-entity-id="new-partner"]')).toHaveAttribute('data-lineage-role', 'member')
     expect(container.querySelector('[data-entity-id="child-1"]')).toHaveAttribute('data-lineage-role', 'partner')
@@ -477,30 +653,30 @@ describe('LineageGraph highlights and archive actions', () => {
     const { container } = renderGraph(data)
     const viewport = screen.getByTestId('lineage-viewport')
     const canvas = screen.getByTestId('lineage-canvas')
-    const selector = screen.getByLabelText('Status and gender highlight')
-    const control = selector.closest<HTMLElement>('.highlight-control')!
-    expect(selector).toHaveValue('set')
+    const trigger = highlightTrigger('Status and gender highlight')
+    const control = trigger.closest<HTMLElement>('.highlight-control')!
+    expect(trigger).toHaveAttribute('data-value', 'set')
     expect(viewport).toContainElement(control)
     expect(canvas).not.toContainElement(control)
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
 
-    fireEvent.change(selector, { target: { value: 'dead' } })
+    commitHighlight('Status and gender highlight', 'Dead')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
     expect(container.querySelector('[data-entity-id="father"]')).toHaveAttribute('data-status', 'dead')
     expect(container.querySelectorAll('.highlight-dead [data-status="dead"]')).toHaveLength(1)
 
-    fireEvent.change(selector, { target: { value: 'alive' } })
+    commitHighlight('Status and gender highlight', 'Alive')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-alive')
-    fireEvent.change(selector, { target: { value: 'male' } })
+    commitHighlight('Status and gender highlight', 'Male')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-male')
-    fireEvent.change(selector, { target: { value: 'female' } })
+    commitHighlight('Status and gender highlight', 'Female')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
     expect(container.querySelector('[data-entity-id="mother"]')).toHaveAttribute('data-gender', 'female')
   })
 
   it('keeps active gold and owner-target states separate from filter matching', async () => {
     const { container } = renderGraph(fresh(), 'people', { focusRequest: { entityId: 'father', requestId: 91 } })
-    fireEvent.change(screen.getByLabelText('Status and gender highlight'), { target: { value: 'alive' } })
+    commitHighlight('Status and gender highlight', 'Alive')
     const father = screen.getByRole('button', { name: /Father details.*navigation target/i })
     expect(father).toHaveClass('is-owner-target')
     fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
@@ -512,13 +688,22 @@ describe('LineageGraph highlights and archive actions', () => {
   it('applies the same status and gender filters to pet portraits', () => {
     const data = fresh()
     const { container } = renderGraph(data, 'pets')
-    const selector = screen.getByLabelText('Status and gender highlight')
     const iring = container.querySelector('[data-entity-id="iring-brown"]')
+    const trigger = highlightTrigger('Status and gender highlight')
 
-    fireEvent.change(selector, { target: { value: 'dead' } })
+    fireEvent.click(trigger)
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Dead' }))
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(trigger).toHaveAttribute('data-value', 'set')
+    fireEvent.mouseLeave(trigger.closest('.highlight-filter')!)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
+    expect(screen.getByRole('listbox', { name: 'Status & gender options' })).toBeInTheDocument()
+    fireEvent.click(document.body)
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-set')
+    commitHighlight('Status and gender highlight', 'Dead')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-dead')
     expect(iring).toHaveAttribute('data-status', 'dead')
-    fireEvent.change(selector, { target: { value: 'female' } })
+    commitHighlight('Status and gender highlight', 'Female')
     expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
     expect(iring).toHaveAttribute('data-gender', 'female')
   })
@@ -772,8 +957,8 @@ describe('LineageGraph viewport controls', () => {
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reset and fit graph' })).toBeDisabled()
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Status and gender highlight"]')).toBeDisabled()
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Lineage path"]')).toBeDisabled()
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Status and gender highlight"]')).toBeDisabled()
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Lineage path"]')).toBeDisabled()
 
     const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -300, clientX: 120, clientY: 100 })
     viewport.dispatchEvent(wheel)
