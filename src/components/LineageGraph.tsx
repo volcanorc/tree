@@ -86,6 +86,10 @@ interface LineageGraphProps {
   onEditAction?: (intent: ArchiveEditIntent) => void
   onEntityPatch?: (request: ArchiveEntityPatch) => string
   recentEntityId?: string | null
+  interactionLocked?: boolean
+  onOpenMap?: () => void
+  fullscreenMode?: boolean
+  onToggleFullscreen?: (trigger?: HTMLElement) => void
 }
 
 type HighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female'
@@ -109,6 +113,8 @@ type Gesture =
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 2.5
+const TOUCH_HOLD_DELAY = 450
+const TOUCH_HOLD_MOVE_TOLERANCE = 10
 
 function clampScale(value: number) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value))
@@ -334,8 +340,67 @@ function EntityCard({
   onActivate: (entity: Entity) => void
 }) {
   const safeLinks = entity.links.filter((link) => link.trim() && isSafeExternalUrl(link))
+  const touchHoldTimer = useRef<number | null>(null)
+  const touchStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
+  const touchPreviewActive = useRef(false)
+  const touchGestureCancelled = useRef(false)
+
+  const clearTouchHoldTimer = () => {
+    if (touchHoldTimer.current !== null) {
+      window.clearTimeout(touchHoldTimer.current)
+      touchHoldTimer.current = null
+    }
+  }
+  const cancelTouchGesture = () => {
+    clearTouchHoldTimer()
+    if (touchPreviewActive.current) onLeave()
+    touchPreviewActive.current = false
+    touchGestureCancelled.current = true
+    touchStart.current = null
+  }
+  useEffect(() => () => {
+    if (touchHoldTimer.current !== null) window.clearTimeout(touchHoldTimer.current)
+  }, [])
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'touch') return
+    clearTouchHoldTimer()
+    touchStart.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+    touchPreviewActive.current = false
+    touchGestureCancelled.current = false
+    touchHoldTimer.current = window.setTimeout(() => {
+      const start = touchStart.current
+      if (!start || start.pointerId !== event.pointerId || touchGestureCancelled.current) return
+      touchPreviewActive.current = true
+      touchHoldTimer.current = null
+      onHover(entity, start.x, start.y)
+    }, TOUCH_HOLD_DELAY)
+  }
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'touch') {
+      onHover(entity, event.clientX, event.clientY)
+      return
+    }
+    const start = touchStart.current
+    if (!start || start.pointerId !== event.pointerId) return
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > TOUCH_HOLD_MOVE_TOLERANCE) {
+      cancelTouchGesture()
+      return
+    }
+    if (touchPreviewActive.current) onHover(entity, event.clientX, event.clientY)
+  }
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (event.pointerType === 'touch') {
+      const previewed = touchPreviewActive.current
+      const cancelled = touchGestureCancelled.current
+      clearTouchHoldTimer()
+      touchStart.current = null
+      touchPreviewActive.current = false
+      touchGestureCancelled.current = false
+      if (previewed) onLeave()
+      if (previewed || cancelled) return
+    }
     onActivate(entity)
   }
   return (
@@ -348,12 +413,19 @@ function EntityCard({
       data-layout-slot={layoutSlot}
       aria-label={`${displayValue(entity.displayName)} details${safeLinks.length > 0 ? `, ${safeLinks.length} profile ${safeLinks.length === 1 ? 'link' : 'links'} available` : ''}${focusedEntityId === entity.id ? ', navigation target' : ''}`}
       aria-expanded={pinnedEntityId === entity.id}
-      onPointerEnter={(event) => onHover(entity, event.clientX, event.clientY)}
-      onPointerMove={(event) => {
-        if (event.pointerType === 'mouse') onHover(entity, event.clientX, event.clientY)
+      onPointerDown={handlePointerDown}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== 'touch') onHover(entity, event.clientX, event.clientY)
       }}
-      onPointerLeave={onLeave}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={(event) => {
+        if (event.pointerType === 'touch') cancelTouchGesture()
+        else onLeave()
+      }}
       onPointerUp={handlePointerUp}
+      onPointerCancel={(event) => {
+        if (event.pointerType === 'touch') cancelTouchGesture()
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
@@ -623,8 +695,8 @@ function DetailPopover({
     ? [
         { label: 'Species', value: displayValue(entity.species), field: 'species' },
         { label: 'Breed', value: displayValue(entity.breed), field: 'breed' },
-        { label: 'Age', value: age, field: 'birthDate' },
-        { label: 'Born', value: bornValue(entity) },
+        { label: 'Age', value: age },
+        { label: 'Born', value: bornValue(entity), field: 'birthDate' },
         ...diedRows,
         { label: 'Gender', value: displayValue(entity.gender), field: 'gender' },
         { label: 'Status', value: entity.status === 'dead' ? 'Dead' : 'Alive', field: 'status' },
@@ -647,8 +719,8 @@ function DetailPopover({
         { label: 'Personality', value: displayValue(entity.personality), field: 'personality' },
       ]
     : [
-        { label: 'Age', value: age, field: 'birthDate' },
-        { label: 'Born', value: bornValue(entity) },
+        { label: 'Age', value: age },
+        { label: 'Born', value: bornValue(entity), field: 'birthDate' },
         ...diedRows,
         { label: 'Gender', value: displayValue(entity.gender), field: 'gender' },
         { label: 'Status', value: entity.status === 'dead' ? 'Dead' : 'Alive', field: 'status' },
@@ -924,6 +996,10 @@ export function LineageGraph({
   onEditAction,
   onEntityPatch,
   recentEntityId = null,
+  interactionLocked = false,
+  onOpenMap,
+  fullscreenMode = false,
+  onToggleFullscreen,
 }: LineageGraphProps) {
   const currentDate = useCurrentDate()
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -934,6 +1010,7 @@ export function LineageGraph({
   const wheelTimer = useRef<number | null>(null)
   const focusTimer = useRef<number | null>(null)
   const focusRequestRef = useRef<LineageFocusRequest | null>(focusRequest)
+  const previousInteractionLocked = useRef(interactionLocked)
   const initialFitComplete = useRef(false)
   const viewportSizeRef = useRef({ width: 0, height: 0 })
   const [view, setView] = useState<ViewState>({ x: 24, y: 24, scale: 0.82 })
@@ -947,6 +1024,14 @@ export function LineageGraph({
   const [dismissedFocusRequestId, setDismissedFocusRequestId] = useState<number | null>(null)
   const [highlightFilter, setHighlightFilter] = useState<HighlightFilter>('set')
   useEffect(() => { viewRef.current = view }, [view])
+
+  useEffect(() => {
+    const wasLocked = previousInteractionLocked.current
+    previousInteractionLocked.current = interactionLocked
+    if (!wasLocked || interactionLocked) return
+    const frame = requestAnimationFrame(() => viewportRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [interactionLocked])
 
   const entities = useMemo<Map<string, Entity>>(
     () => new Map((mode === 'people' ? people : pets).map((entity) => [entity.id, entity])),
@@ -1181,10 +1266,10 @@ export function LineageGraph({
   }, [entities, measurePinnedPopover, paths, pinnedEntityId, view])
 
   useLayoutEffect(() => {
-    if (!focusedEntityId) return
+    if (!focusedEntityId || interactionLocked) return
     const frame = requestAnimationFrame(() => focusEntityInView(focusedEntityId))
     return () => cancelAnimationFrame(frame)
-  }, [focusEntityInView, focusRequest?.requestId, focusedEntityId])
+  }, [focusEntityInView, focusRequest?.requestId, focusedEntityId, interactionLocked])
 
   useEffect(() => () => {
     if (focusTimer.current) window.clearTimeout(focusTimer.current)
@@ -1233,6 +1318,7 @@ export function LineageGraph({
     const viewport = viewportRef.current
     if (!viewport) return
     const onWheel = (event: WheelEvent) => {
+      if (interactionLocked) return
       event.preventDefault()
       const rect = viewport.getBoundingClientRect()
       const pointX = event.clientX - rect.left
@@ -1252,7 +1338,7 @@ export function LineageGraph({
       viewport.removeEventListener('wheel', onWheel)
       if (wheelTimer.current) window.clearTimeout(wheelTimer.current)
     }
-  }, [])
+  }, [interactionLocked])
 
   const zoomBy = (factor: number) => {
     const viewport = viewportRef.current
@@ -1348,23 +1434,24 @@ export function LineageGraph({
       <div className="graph-toolbar">
         <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
-          <button type="button" onClick={() => zoomBy(1 / 1.15)} aria-label="Zoom out">−</button>
-          <button type="button" onClick={() => zoomBy(1.15)} aria-label="Zoom in">+</button>
-          <button type="button" onClick={resetView} aria-label="Reset and fit graph">⌂</button>
+          <button type="button" onClick={() => zoomBy(1 / 1.15)} aria-label="Zoom out" disabled={interactionLocked}>−</button>
+          <button type="button" onClick={() => zoomBy(1.15)} aria-label="Zoom in" disabled={interactionLocked}>+</button>
+          <button type="button" onClick={resetView} aria-label="Reset and fit graph" disabled={interactionLocked}>⌂</button>
         </div>
       </div>
       <div
-        className={`lineage-viewport ${interacting ? 'is-interacting ' : ''}${programmaticFocus ? 'is-owner-focusing' : ''}`}
+        className={`lineage-viewport ${interactionLocked ? 'is-locked ' : ''}${interacting ? 'is-interacting ' : ''}${programmaticFocus ? 'is-owner-focusing' : ''}`}
         data-testid="lineage-viewport"
         ref={viewportRef}
         role="group"
-        tabIndex={0}
-        aria-label="Lineage canvas. Use arrow keys, drag, mouse wheel, or pinch to explore."
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={stopDrag}
-        onPointerCancel={stopDrag}
+        tabIndex={interactionLocked ? -1 : 0}
+        aria-label={interactionLocked ? 'Lineage map preview. Open the map to explore.' : 'Lineage canvas. Use arrow keys, drag, mouse wheel, or pinch to explore.'}
+        onPointerDown={interactionLocked ? undefined : startDrag}
+        onPointerMove={interactionLocked ? undefined : moveDrag}
+        onPointerUp={interactionLocked ? undefined : stopDrag}
+        onPointerCancel={interactionLocked ? undefined : stopDrag}
         onKeyDown={(event) => {
+          if (interactionLocked) return
           const target = event.target as HTMLElement
           if (target.closest('input, select, textarea, [contenteditable="true"]')) return
           const movements: Record<string, { x: number; y: number }> = { ArrowLeft: { x: 44, y: 0 }, ArrowRight: { x: -44, y: 0 }, ArrowUp: { x: 0, y: 44 }, ArrowDown: { x: 0, y: -44 } }
@@ -1377,9 +1464,9 @@ export function LineageGraph({
           setView((current) => ({ ...current, x: current.x + movement.x, y: current.y + movement.y }))
         }}
       >
-        <label className="highlight-control" onPointerDown={(event) => event.stopPropagation()}>
+        <label className="highlight-control" aria-hidden={interactionLocked || undefined} onPointerDown={(event) => event.stopPropagation()}>
           <span>Highlight</span>
-          <select value={highlightFilter} onChange={(event) => setHighlightFilter(event.target.value as HighlightFilter)} aria-label="Highlight profiles">
+          <select value={highlightFilter} onChange={(event) => setHighlightFilter(event.target.value as HighlightFilter)} aria-label="Highlight profiles" disabled={interactionLocked}>
             <option value="set">Set</option>
             <option value="dead">Dead</option>
             <option value="alive">Alive</option>
@@ -1387,7 +1474,7 @@ export function LineageGraph({
             <option value="female">Female</option>
           </select>
         </label>
-        <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+        <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} inert={interactionLocked || undefined} aria-hidden={interactionLocked || undefined} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="connector-layer" aria-hidden="true">
             {paths.map((path) => (
               <path
@@ -1438,8 +1525,34 @@ export function LineageGraph({
             onEntityPatch={onEntityPatch}
           />
         )}
+        {onOpenMap && (
+          <div className="map-access-gate" inert={!interactionLocked || undefined} aria-hidden={!interactionLocked || undefined}>
+            <button type="button" onClick={onOpenMap} aria-label={`Open ${mode === 'people' ? 'Family' : 'Pets'} map`} disabled={!interactionLocked}>
+              <span>Open map</span>
+              <small>Explore {mode === 'people' ? 'the family branches' : 'the pet lineage'}</small>
+            </button>
+          </div>
+        )}
+        {onToggleFullscreen && !interactionLocked && (
+          <button
+            type="button"
+            className="fullscreen-map-control"
+            aria-label={fullscreenMode ? 'Exit fullscreen map' : 'Enter fullscreen map'}
+            title={fullscreenMode ? 'Exit fullscreen' : 'Enter fullscreen'}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => onToggleFullscreen(event.currentTarget)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              {fullscreenMode ? (
+                <path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" />
+              ) : (
+                <path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6" />
+              )}
+            </svg>
+          </button>
+        )}
       </div>
-      <p className="graph-help">Hover for quick details · Select a portrait for its full profile and links</p>
+      <p className="graph-help">{interactionLocked ? 'Open the map when you are ready to explore' : 'Hover for quick details · Select a portrait for its full profile and links'}</p>
       {hover && hover.entity.id !== pinnedEntityId && (
         <DetailPopover key={hover.entity.id} entity={hover.entity} people={people} pets={pets} today={currentDate} hover={hover} />
       )}

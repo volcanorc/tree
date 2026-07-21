@@ -60,6 +60,9 @@ function ArchiveView({
   onEditIntent,
   onEntityPatch,
   recentEntityId,
+  interactionLocked,
+  onOpenMap,
+  onToggleFullscreen,
 }: {
   data: TreeData
   view: 'family' | 'pets'
@@ -71,6 +74,9 @@ function ArchiveView({
   onEditIntent: (intent: ArchiveEditIntent) => void
   onEntityPatch: (request: ArchiveEntityPatch) => string
   recentEntityId: string | null
+  interactionLocked: boolean
+  onOpenMap: () => void
+  onToggleFullscreen: (trigger?: HTMLElement) => void
 }) {
   const isFamily = view === 'family'
   return (
@@ -113,6 +119,9 @@ function ArchiveView({
           onEditAction={authenticated ? onEditIntent : undefined}
           onEntityPatch={authenticated ? onEntityPatch : undefined}
           recentEntityId={recentEntityId}
+          interactionLocked={interactionLocked}
+          onOpenMap={onOpenMap}
+          onToggleFullscreen={onToggleFullscreen}
         />
       </section>
 
@@ -146,10 +155,15 @@ export default function App() {
   const [archiveDelete, setArchiveDelete] = useState<ArchiveDelete | null>(null)
   const [archiveStatus, setArchiveStatus] = useState('')
   const [recentEntity, setRecentEntity] = useState<{ kind: 'person' | 'pet'; id: string; sequence: number } | null>(null)
+  const [openedMaps, setOpenedMaps] = useState<Record<'family' | 'pets', boolean>>({ family: false, pets: false })
+  const [fullscreenActive, setFullscreenActive] = useState(false)
   const familyFocusSequence = useRef(0)
   const petFocusSequence = useRef(0)
   const dashboardEditSequence = useRef(0)
   const recentEntitySequence = useRef(0)
+  const fullscreenLayerRef = useRef<HTMLElement>(null)
+  const fullscreenReturnFocusRef = useRef<HTMLElement | null>(null)
+  const wasFullscreenActive = useRef(false)
   const currentSiteTitle = data?.site.title
 
   useEffect(() => {
@@ -157,6 +171,44 @@ export default function App() {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
+
+  useEffect(() => {
+    if (!fullscreenActive) return
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setFullscreenActive(false)
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      exitArchiveFullscreen()
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [fullscreenActive])
+
+  useEffect(() => {
+    document.body.classList.toggle('archive-fullscreen-active', fullscreenActive)
+    if (fullscreenActive) {
+      wasFullscreenActive.current = true
+      const frame = requestAnimationFrame(() => fullscreenLayerRef.current?.focus())
+      return () => cancelAnimationFrame(frame)
+    }
+    if (!wasFullscreenActive.current) return
+    wasFullscreenActive.current = false
+    const frame = requestAnimationFrame(() => fullscreenReturnFocusRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [fullscreenActive])
+
+  useEffect(() => {
+    return () => document.body.classList.remove('archive-fullscreen-active')
+  }, [])
+
+  useEffect(() => {
+    if (view === 'dashboard' && fullscreenActive) exitArchiveFullscreen()
+  }, [fullscreenActive, view])
 
   useEffect(() => {
     let active = true
@@ -224,7 +276,34 @@ export default function App() {
     return countDescendants(data)
   }, [data])
 
+  function enterArchiveFullscreen(trigger?: HTMLElement) {
+    fullscreenReturnFocusRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    setOpenedMaps({ family: true, pets: true })
+    setFullscreenActive(true)
+    const requestFullscreen = document.documentElement.requestFullscreen
+    if (typeof requestFullscreen === 'function') {
+      void requestFullscreen.call(document.documentElement).catch(() => {
+        // The fixed full-viewport layer remains active as a reliable fallback.
+      })
+    }
+  }
+
+  function exitArchiveFullscreen() {
+    setFullscreenActive(false)
+    if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+      void document.exitFullscreen().catch(() => {
+        // React still closes the fixed fallback layer if the browser rejects exit.
+      })
+    }
+  }
+
+  function navigateFullscreen(next: 'family' | 'pets') {
+    window.location.hash = next
+    setView(next)
+  }
+
   function navigate(next: View) {
+    if (next === 'dashboard' && fullscreenActive) exitArchiveFullscreen()
     window.location.hash = next === 'family' ? 'family' : next
     setView(next)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -437,8 +516,9 @@ export default function App() {
       <div className="site-mural" aria-hidden="true" />
       <div className="site-veil" aria-hidden="true" />
       <div className="site-grain" aria-hidden="true" />
-      <a className="skip-link" href={view === 'dashboard' ? '#dashboard-main' : '#archive-main'}>Skip to content</a>
-      <SiteHeader title={data.site.title} view={view} authenticated={authenticated} onNavigate={navigate} onLogout={logout} />
+      <div className="site-page" inert={fullscreenActive || undefined} aria-hidden={fullscreenActive || undefined}>
+        <a className="skip-link" href={view === 'dashboard' ? '#dashboard-main' : '#archive-main'}>Skip to content</a>
+        <SiteHeader title={data.site.title} view={view} authenticated={authenticated} onNavigate={navigate} onLogout={logout} />
 
       {draftRecovered && view !== 'dashboard' && (
         <div className="draft-banner" role="status">
@@ -474,7 +554,54 @@ export default function App() {
           onEditIntent={handleArchiveEdit}
           onEntityPatch={patchArchiveEntity}
           recentEntityId={recentEntity?.kind === (view === 'family' ? 'person' : 'pet') ? recentEntity.id : null}
+          interactionLocked={!openedMaps[view]}
+          onOpenMap={() => setOpenedMaps((current) => ({ ...current, [view]: true }))}
+          onToggleFullscreen={enterArchiveFullscreen}
         />
+      )}
+      </div>
+
+      {fullscreenActive && view !== 'dashboard' && (
+        <section
+          className="fullscreen-archive"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Fullscreen ${view === 'family' ? 'Family' : 'Pets'} archive`}
+          tabIndex={-1}
+          ref={fullscreenLayerRef}
+        >
+          <header className="fullscreen-topbar">
+            <div className="fullscreen-title">
+              <span aria-hidden="true">✦</span>
+              <strong>{view === 'family' ? data.site.title : 'The Pet Archive'}</strong>
+            </div>
+            <nav aria-label="Fullscreen archive navigation">
+              <button type="button" className={view === 'family' ? 'active' : ''} aria-current={view === 'family' ? 'page' : undefined} onClick={() => navigateFullscreen('family')}>Family</button>
+              <button type="button" className={view === 'pets' ? 'active' : ''} aria-current={view === 'pets' ? 'page' : undefined} onClick={() => navigateFullscreen('pets')}>Pets</button>
+            </nav>
+            <button type="button" className="fullscreen-exit" onClick={exitArchiveFullscreen} aria-label="Exit fullscreen archive">Exit fullscreen</button>
+          </header>
+          <div className="fullscreen-graph">
+            <LineageGraph
+              key={`fullscreen-${view}`}
+              mode={view === 'family' ? 'people' : 'pets'}
+              people={data.people}
+              families={data.families}
+              pets={data.pets}
+              petFamilies={data.petFamilies}
+              onOwnerNavigate={view === 'pets' ? navigateToPerson : undefined}
+              onPetNavigate={view === 'family' ? navigateToPet : undefined}
+              focusRequest={view === 'family' ? familyFocusRequest : petFocusRequest}
+              onFocusAcknowledge={view === 'family' ? acknowledgeFamilyFocus : acknowledgePetFocus}
+              canEdit={authenticated}
+              onEditAction={authenticated ? handleArchiveEdit : undefined}
+              onEntityPatch={authenticated ? patchArchiveEntity : undefined}
+              recentEntityId={recentEntity?.kind === (view === 'family' ? 'person' : 'pet') ? recentEntity.id : null}
+              fullscreenMode
+              onToggleFullscreen={exitArchiveFullscreen}
+            />
+          </div>
+        </section>
       )}
 
       {archiveStatus && view !== 'dashboard' && (
@@ -553,7 +680,7 @@ export default function App() {
         </div>
       )}
 
-      <footer className="site-footer">
+      <footer className="site-footer" inert={fullscreenActive || undefined} aria-hidden={fullscreenActive || undefined}>
         <div>
           <span className="footer-mark" aria-hidden="true">✦</span>
           <p>{data.site.title}</p>

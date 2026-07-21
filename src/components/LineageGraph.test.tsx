@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import seed from '../test/fixtures/tree-data-v4.json'
 import type { ArchiveEditIntent, ArchiveEntityPatch, TreeData } from '../types'
@@ -19,6 +20,10 @@ function renderGraph(
     onEditAction?: (intent: ArchiveEditIntent) => void
     onEntityPatch?: (request: ArchiveEntityPatch) => string
     recentEntityId?: string | null
+    interactionLocked?: boolean
+    onOpenMap?: () => void
+    fullscreenMode?: boolean
+    onToggleFullscreen?: (trigger?: HTMLElement) => void
   } = {},
 ) {
   return render(
@@ -33,7 +38,10 @@ function renderGraph(
   )
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('LineageGraph details and portraits', () => {
   it('shows missing values, status, and portrait number in the hover card', () => {
@@ -298,6 +306,71 @@ describe('LineageGraph multi-link activation', () => {
   })
 })
 
+describe('LineageGraph touch-hold previews', () => {
+  it('waits 450 ms, closes on release, and suppresses pinned activation after a hold', () => {
+    vi.useFakeTimers()
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+
+    fireEvent.pointerEnter(father, { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 120 })
+    fireEvent.pointerDown(father, { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 120 })
+    act(() => vi.advanceTimersByTime(449))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.getByRole('tooltip', { name: /Father details/i })).toBeInTheDocument()
+
+    fireEvent.pointerUp(father, { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 120 })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+  })
+
+  it('keeps a short touch as a pinned-profile tap', () => {
+    vi.useFakeTimers()
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+    fireEvent.pointerDown(father, { pointerId: 2, pointerType: 'touch', clientX: 100, clientY: 120 })
+    act(() => vi.advanceTimersByTime(200))
+    fireEvent.pointerUp(father, { pointerId: 2, pointerType: 'touch', clientX: 100, clientY: 120 })
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+  })
+
+  it('cancels a hold after movement or pointer cancellation without opening a profile', () => {
+    vi.useFakeTimers()
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+
+    fireEvent.pointerDown(father, { pointerId: 3, pointerType: 'touch', clientX: 100, clientY: 120 })
+    fireEvent.pointerMove(father, { pointerId: 3, pointerType: 'touch', clientX: 111, clientY: 120 })
+    act(() => vi.advanceTimersByTime(450))
+    fireEvent.pointerUp(father, { pointerId: 3, pointerType: 'touch', clientX: 111, clientY: 120 })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(father, { pointerId: 4, pointerType: 'touch', clientX: 100, clientY: 120 })
+    fireEvent.pointerCancel(father, { pointerId: 4, pointerType: 'touch', clientX: 100, clientY: 120 })
+    act(() => vi.advanceTimersByTime(450))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Father details/i, { selector: 'aside' })).not.toBeInTheDocument()
+  })
+
+  it('shows a held profile beside a different pinned profile and leaves the pin intact', () => {
+    vi.useFakeTimers()
+    renderGraph()
+    const father = screen.getByRole('button', { name: /Father details/i })
+    const mother = screen.getByRole('button', { name: /Mother details/i })
+    fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
+
+    fireEvent.pointerDown(mother, { pointerId: 5, pointerType: 'touch', clientX: 160, clientY: 120 })
+    act(() => vi.advanceTimersByTime(450))
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+    expect(screen.getByRole('tooltip', { name: /Mother details/i })).toBeInTheDocument()
+
+    fireEvent.pointerUp(mother, { pointerId: 5, pointerType: 'touch', clientX: 160, clientY: 120 })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/Father details/i, { selector: 'aside' })).toHaveAttribute('role', 'dialog')
+  })
+})
+
 describe('LineageGraph highlights and archive actions', () => {
   it('keeps a fixed Set selector outside the canvas and targets exactly one chosen filter', () => {
     const data = fresh()
@@ -427,20 +500,52 @@ describe('LineageGraph highlights and archive actions', () => {
     expect(within(dialog).getByTitle('No recorded parents')).toBeDisabled()
   })
 
-  it('shows authenticated pencils only on pinned profiles and commits a person birth date with Enter', () => {
-    const onEntityPatch = vi.fn(() => '')
-    renderGraph(fresh(), 'people', { canEdit: true, onEditAction: vi.fn(), onEntityPatch })
+  it('keeps Age read-only, edits Born, and immediately recalculates a person age', async () => {
+    const onEntityPatch = vi.fn<(request: ArchiveEntityPatch) => string>(() => '')
+    function EditablePersonGraph() {
+      const [data, setData] = useState(fresh)
+      return (
+        <LineageGraph
+          mode="people"
+          people={data.people}
+          families={data.families}
+          pets={data.pets}
+          petFamilies={data.petFamilies}
+          canEdit
+          onEditAction={vi.fn()}
+          onEntityPatch={(request) => {
+            onEntityPatch(request)
+            if (request.kind === 'person') {
+              setData((current) => ({
+                ...current,
+                people: current.people.map((person) => person.id === request.entityId ? { ...person, ...request.patch } : person),
+              }))
+            }
+            return ''
+          }}
+        />
+      )
+    }
+    render(<EditablePersonGraph />)
     const father = screen.getByRole('button', { name: /Father details/i })
     fireEvent.pointerEnter(father, { pointerType: 'mouse', clientX: 100, clientY: 100 })
     expect(screen.getByRole('tooltip')).not.toContainElement(screen.queryByLabelText('Edit birthDate'))
     fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
     const dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
-    fireEvent.click(within(dialog).getByLabelText('Edit birthDate'))
+    const ageRow = within(dialog).getByText('Age', { selector: 'dt' }).parentElement!
+    const bornRow = within(dialog).getByText('Born', { selector: 'dt' }).parentElement!
+    expect(within(ageRow).queryByLabelText('Edit birthDate')).not.toBeInTheDocument()
+    const bornPencil = within(bornRow).getByLabelText('Edit birthDate')
+    fireEvent.click(bornPencil)
     const input = within(dialog).getByLabelText('Edit birthDate', { selector: 'input' })
     expect(input).toHaveAttribute('type', 'date')
     fireEvent.change(input, { target: { value: '2000-07-18' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onEntityPatch).toHaveBeenCalledWith({ kind: 'person', entityId: 'father', patch: { birthDate: '2000-07-18' } })
+    const today = new Date()
+    const expectedAge = today.getFullYear() - 2000 - (today.getMonth() < 6 || (today.getMonth() === 6 && today.getDate() < 18) ? 1 : 0)
+    await waitFor(() => expect(ageRow).toHaveTextContent(`Age${expectedAge}`))
+    expect(bornRow).toHaveTextContent('BornJuly 18 2000')
   })
 
   it('keeps an invalid blank name editor open and normalizes fuzzy pet dates before saving', () => {
@@ -460,7 +565,10 @@ describe('LineageGraph highlights and archive actions', () => {
     renderGraph(fresh(), 'pets', { canEdit: true, onEditAction: vi.fn(), onEntityPatch: petPatch })
     fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
     dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
-    fireEvent.click(within(dialog).getByLabelText('Edit birthDate'))
+    const petAgeRow = within(dialog).getByText('Age', { selector: 'dt' }).parentElement!
+    const petBornRow = within(dialog).getByText('Born', { selector: 'dt' }).parentElement!
+    expect(within(petAgeRow).queryByLabelText('Edit birthDate')).not.toBeInTheDocument()
+    fireEvent.click(within(petBornRow).getByLabelText('Edit birthDate'))
     const birth = within(dialog).getByLabelText('Edit birthDate', { selector: 'input' })
     expect(birth).toHaveAttribute('type', 'text')
     fireEvent.change(birth, { target: { value: '02-decamber-9' } })
@@ -552,6 +660,73 @@ describe('LineageGraph owner navigation', () => {
 })
 
 describe('LineageGraph viewport controls', () => {
+  it('gates public interaction without intercepting page wheel input', () => {
+    const onOpenMap = vi.fn()
+    const { container } = renderGraph(fresh(), 'people', { interactionLocked: true, onOpenMap })
+    const viewport = screen.getByTestId('lineage-viewport')
+    const canvas = screen.getByTestId('lineage-canvas')
+    const before = canvas.style.transform
+
+    expect(viewport).toHaveClass('is-locked')
+    expect(viewport).toHaveAttribute('tabindex', '-1')
+    expect(canvas).toHaveAttribute('inert')
+    expect(canvas).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset and fit graph' })).toBeDisabled()
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Highlight profiles"]')).toBeDisabled()
+
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -300, clientX: 120, clientY: 100 })
+    viewport.dispatchEvent(wheel)
+    fireEvent.keyDown(viewport, { key: '+' })
+    expect(wheel.defaultPrevented).toBe(false)
+    expect(canvas.style.transform).toBe(before)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Family map' }))
+    expect(onOpenMap).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps shared graphs immediately interactive unless a public gate is supplied', () => {
+    renderGraph()
+    expect(screen.queryByRole('button', { name: 'Open Family map' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('lineage-viewport')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeEnabled()
+  })
+
+  it('shows the expand control only for an opened map and switches to a collapse control in fullscreen', () => {
+    const onToggleFullscreen = vi.fn()
+    const graph = renderGraph(fresh(), 'people', { interactionLocked: true, onOpenMap: vi.fn(), onToggleFullscreen })
+    expect(screen.queryByRole('button', { name: 'Enter fullscreen map' })).not.toBeInTheDocument()
+
+    graph.rerender(
+      <LineageGraph
+        mode="people"
+        people={fresh().people}
+        families={fresh().families}
+        pets={fresh().pets}
+        petFamilies={fresh().petFamilies}
+        interactionLocked={false}
+        onToggleFullscreen={onToggleFullscreen}
+      />,
+    )
+    const enter = screen.getByRole('button', { name: 'Enter fullscreen map' })
+    fireEvent.click(enter)
+    expect(onToggleFullscreen).toHaveBeenCalledWith(enter)
+
+    graph.rerender(
+      <LineageGraph
+        mode="people"
+        people={fresh().people}
+        families={fresh().families}
+        pets={fresh().pets}
+        petFamilies={fresh().petFamilies}
+        fullscreenMode
+        onToggleFullscreen={onToggleFullscreen}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Exit fullscreen map' })).toBeInTheDocument()
+  })
+
   it('centers a requested owner, keeps the green target through other selections, and acknowledges the owner selection', async () => {
     const onFocusAcknowledge = vi.fn()
     const { rerender } = renderGraph(fresh(), 'people', {

@@ -14,10 +14,20 @@ function mockPublishedData(data: TreeData = structuredClone(seed) as TreeData) {
   }))
 }
 
+async function openMap(kind: 'Family' | 'Pets') {
+  const button = await screen.findByRole('button', { name: `Open ${kind} map` })
+  fireEvent.click(button)
+  await waitFor(() => expect(screen.queryByRole('button', { name: `Open ${kind} map` })).not.toBeInTheDocument())
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   sessionStorage.removeItem('celestial-family-archive-admin')
   window.location.hash = ''
+  Reflect.deleteProperty(document.documentElement, 'requestFullscreen')
+  Reflect.deleteProperty(document, 'exitFullscreen')
+  Reflect.deleteProperty(document, 'fullscreenElement')
+  document.body.classList.remove('archive-fullscreen-active')
 })
 
 describe('App draft recovery', () => {
@@ -73,6 +83,128 @@ describe('App draft recovery', () => {
     expect(document.title).toBe('The Lineage Archive')
   })
 
+  it('unlocks Family and Pets independently until reload and focuses the opened viewport', async () => {
+    mockPublishedData()
+    const app = render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    let viewport = screen.getByTestId('lineage-viewport')
+    expect(viewport).toHaveClass('is-locked')
+    await openMap('Family')
+    await waitFor(() => expect(viewport).toHaveFocus())
+    expect(viewport).not.toHaveClass('is-locked')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pets' }))
+    expect(await screen.findByRole('heading', { name: 'The Pet Archive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open Pets map' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Family' }))
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Family map' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('lineage-viewport')).not.toHaveClass('is-locked')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pets' }))
+    await openMap('Pets')
+    expect(screen.getByTestId('lineage-viewport')).not.toHaveClass('is-locked')
+
+    app.unmount()
+    window.location.hash = 'family'
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    viewport = screen.getByTestId('lineage-viewport')
+    expect(viewport).toHaveClass('is-locked')
+    expect(screen.getByRole('button', { name: 'Open Family map' })).toBeInTheDocument()
+  })
+
+  it('uses a stable fallback fullscreen layer, switches archives, and leaves both maps unlocked after exit', async () => {
+    mockPublishedData()
+    Object.defineProperty(document.documentElement, 'requestFullscreen', {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(new Error('Fullscreen unavailable')),
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter fullscreen map' }))
+    let fullscreen = await screen.findByRole('dialog', { name: 'Fullscreen Family archive' })
+    expect(document.body).toHaveClass('archive-fullscreen-active')
+    expect(document.querySelector('.site-page')).toHaveAttribute('inert')
+    expect(within(fullscreen).queryByRole('button', { name: /Open .* map/ })).not.toBeInTheDocument()
+
+    fireEvent.click(within(fullscreen).getByRole('button', { name: 'Pets' }))
+    fullscreen = await screen.findByRole('dialog', { name: 'Fullscreen Pets archive' })
+    expect(window.location.hash).toBe('#pets')
+    expect(within(fullscreen).getByRole('button', { name: /Iring Brown details/i })).toBeInTheDocument()
+    expect(within(fullscreen).getByRole('button', { name: 'Exit fullscreen map' })).toBeInTheDocument()
+
+    fireEvent.click(within(fullscreen).getByRole('button', { name: 'Exit fullscreen archive' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Fullscreen .* archive/ })).not.toBeInTheDocument())
+    expect(document.body).not.toHaveClass('archive-fullscreen-active')
+    expect(screen.queryByRole('button', { name: 'Open Pets map' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enter fullscreen map' })).toBeInTheDocument()
+  })
+
+  it('synchronizes native fullscreen exit, restores focus, and supports fallback Escape', async () => {
+    mockPublishedData()
+    let nativeElement: Element | null = document.documentElement
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    const exitFullscreen = vi.fn().mockImplementation(async () => { nativeElement = null })
+    Object.defineProperty(document.documentElement, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+    Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exitFullscreen })
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => nativeElement })
+
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
+    const expand = screen.getByRole('button', { name: 'Enter fullscreen map' })
+    expand.focus()
+    fireEvent.click(expand)
+    expect(await screen.findByRole('dialog', { name: 'Fullscreen Family archive' })).toBeInTheDocument()
+    expect(requestFullscreen).toHaveBeenCalledTimes(1)
+
+    nativeElement = null
+    fireEvent(document, new Event('fullscreenchange'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Fullscreen Family archive' })).not.toBeInTheDocument())
+    await waitFor(() => expect(expand).toHaveFocus())
+
+    fireEvent.click(expand)
+    expect(await screen.findByRole('dialog', { name: 'Fullscreen Family archive' })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Fullscreen Family archive' })).not.toBeInTheDocument())
+  })
+
+  it('exits fullscreen before opening authenticated profile settings', async () => {
+    mockPublishedData()
+    sessionStorage.setItem('celestial-family-archive-admin', 'yes')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
+    fireEvent.click(screen.getByRole('button', { name: 'Enter fullscreen map' }))
+    const fullscreen = await screen.findByRole('dialog', { name: 'Fullscreen Family archive' })
+    fireEvent.pointerUp(within(fullscreen).getByRole('button', { name: /Child 2 details/i }), { pointerType: 'mouse', button: 0 })
+    const profile = within(fullscreen).getByLabelText(/Child 2 details/i, { selector: 'aside' })
+    fireEvent.click(within(profile).getByLabelText('Profile actions'))
+    fireEvent.click(within(profile).getByText('Settings'))
+
+    expect(await screen.findByText('Editing: Child 2')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: /Fullscreen .* archive/ })).not.toBeInTheDocument()
+    expect(window.location.hash).toBe('#dashboard')
+  })
+
+  it('leaves authenticated dashboard graph previews immediately interactive', async () => {
+    mockPublishedData()
+    sessionStorage.setItem('celestial-family-archive-admin', 'yes')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    expect(await screen.findByRole('heading', { name: 'Archive dashboard' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByRole('heading', { name: 'Graph preview' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Family map' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Pets map' })).not.toBeInTheDocument()
+    screen.getAllByTestId('lineage-viewport').forEach((preview) => expect(preview).toHaveAttribute('tabindex', '0'))
+  })
+
   it('navigates from a pinned pet owner to the focused family portrait', async () => {
     const data = structuredClone(seed) as TreeData
     data.pets[0].ownerPersonId = 'father'
@@ -81,12 +213,14 @@ describe('App draft recovery', () => {
 
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Pet Archive' })).toBeInTheDocument()
+    await openMap('Pets')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
     const petDialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
     fireEvent.click(within(petDialog).getByLabelText('View Father in family tree'))
 
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#family')
+    await openMap('Family')
     expect(screen.getByRole('button', { name: /Father details.*navigation target/i })).toHaveClass('is-owner-target')
   })
 
@@ -97,12 +231,14 @@ describe('App draft recovery', () => {
 
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', button: 0 })
     const personDialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
     fireEvent.click(within(personDialog).getByLabelText('View Iring Brown in pet lineage'))
 
     expect(await screen.findByRole('heading', { name: 'The Pet Archive' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#pets')
+    await openMap('Pets')
     expect(screen.getByRole('button', { name: /Iring Brown details.*navigation target/i })).toHaveClass('is-owner-target')
   })
 
@@ -111,6 +247,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Child 2 details/i }), { pointerType: 'mouse', button: 0 })
     const dialog = screen.getByLabelText(/Child 2 details/i, { selector: 'aside' })
     fireEvent.click(within(dialog).getByLabelText('Profile actions'))
@@ -125,6 +262,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Grandchild 1\.1 details/i }), { pointerType: 'mouse', button: 0 })
     const profile = screen.getByLabelText(/Grandchild 1\.1 details/i, { selector: 'aside' })
     fireEvent.click(within(profile).getByLabelText('Profile actions'))
@@ -144,6 +282,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
 
     fireEvent.pointerUp(screen.getByRole('button', { name: /Child 1 details/i }), { pointerType: 'mouse', button: 0 })
     const dialog = screen.getByLabelText(/Child 1 details/i, { selector: 'aside' })
@@ -165,6 +304,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Father details/i }), { pointerType: 'mouse', button: 0 })
     let dialog = screen.getByLabelText(/Father details/i, { selector: 'aside' })
     fireEvent.click(within(dialog).getByLabelText('Edit personality'))
@@ -188,6 +328,7 @@ describe('App draft recovery', () => {
     window.location.hash = 'pets'
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Pet Archive' })).toBeInTheDocument()
+    await openMap('Pets')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Iring Brown details/i }), { pointerType: 'mouse', button: 0 })
     const dialog = screen.getByLabelText(/Iring Brown details/i, { selector: 'aside' })
     fireEvent.click(within(dialog).getByText('+ Offspring'))
@@ -206,6 +347,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Child 1 details/i }), { pointerType: 'mouse', button: 0 })
     const dialog = screen.getByLabelText(/Child 1 details/i, { selector: 'aside' })
     fireEvent.click(within(dialog).getByText('+ Child'))
@@ -223,6 +365,7 @@ describe('App draft recovery', () => {
     sessionStorage.setItem('celestial-family-archive-admin', 'yes')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
+    await openMap('Family')
     fireEvent.pointerUp(screen.getByRole('button', { name: /Grandchild 1\.1 details/i }), { pointerType: 'mouse', button: 0 })
     const profile = screen.getByLabelText(/Grandchild 1\.1 details/i, { selector: 'aside' })
     fireEvent.click(within(profile).getByLabelText('Profile actions'))
