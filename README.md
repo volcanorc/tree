@@ -45,7 +45,7 @@ The downloaded file is a complete replacement, not a partial patch.
 
 ## Data and privacy
 
-`public/tree-data.json` contains the complete version-5 public archive:
+`public/tree-data.json` contains the complete version-6 public archive:
 
 - `site`: title, subtitle, theme, and the local dashboard credential hash.
 - `people`: stable IDs, permanent portrait numbers, public details, life status, optional death dates, a `links` array, and protection state.
@@ -57,7 +57,7 @@ All repository data, images, dates, and links are publicly readable. The PIN onl
 
 People and pets have independent portrait-number namespaces. Automatic paths are `portraits/{number}.png` for people and `portraits/pets/{number}.png` for pets. Only repository-relative PNG paths and explicit HTTPS PNG URLs are accepted; JPG, JPEG, and WebP portraits are rejected. Missing PNG files are valid and display the silhouette fallback. Images are center-cropped, never stretched, and each non-empty story link must use HTTP or HTTPS.
 
-Version-1 through version-4 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 5. Legacy `ageOverride` values are removed because age is now always calculated.
+Version-1 through version-5 files, imports, and browser drafts are migrated when loaded. Exported and downloaded files always use version 6. Legacy `ageOverride` values are removed because age is now always calculated. Each person also has an editable `lineageSurname` used by the Family-line highlight filter.
 
 People birth and death dates use exact `YYYY-MM-DD` values. Pet birth and death dates accept two- or four-digit years with optional month and day values, including numeric months, month names, abbreviations, and unambiguous close misspellings such as `12-decamber-9`. Two-digit years expand into the 2000s, and valid pet dates normalize on blur to readable values such as `2012-dec-9`. Ambiguous month fragments remain invalid. Public profile cards display natural dates such as `December 9 2020`, `December 2020`, or `2020`. The read-only age uses the visitor's local date and refreshes at local midnight. A death date freezes age at that date; a Dead record without one continues aging against today. An empty Death date editor pulses until it receives focus and is cleared when a record changes back to Alive. Newly created people and pets also highlight their unfinished guide fields until each field receives focus during the current dashboard session.
 

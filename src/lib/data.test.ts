@@ -126,9 +126,9 @@ describe('age, ordering, and migration', () => {
     ])
   })
 
-  it.each([1, 2] as const)('migrates version %s data to version 5 with links, death dates, and automatic PNG paths', (version) => {
+  it.each([1, 2] as const)('migrates version %s data to version 6 with links, death dates, and automatic PNG paths', (version) => {
     const migrated = migrateTreeData(legacyVersion(version))
-    expect(migrated.version).toBe(5)
+    expect(migrated.version).toBe(6)
     expect(migrated.people.find((person) => person.id === 'father')).toEqual(expect.objectContaining({
       portraitNumber: 1,
       portrait: 'portraits/1.png',
@@ -148,7 +148,7 @@ describe('age, ordering, and migration', () => {
     expect(validateTreeData(migrated)).toEqual({ valid: true, errors: [] })
   })
 
-  it.each([3, 4] as const)('migrates version-%s data, removes age overrides, and keeps version 5 idempotent', (version) => {
+  it.each([3, 4, 5] as const)('migrates version-%s data, removes age overrides, and keeps version 6 idempotent', (version) => {
     const previous = structuredClone(seed) as unknown as Record<string, unknown>
     previous.version = version
     ;(previous.people as Array<Record<string, unknown>>).forEach((person) => {
@@ -161,7 +161,7 @@ describe('age, ordering, and migration', () => {
       if (pet.id === 'iring-brown') pet.birthDate = ''
     })
     const migrated = migrateTreeData(previous)
-    expect(migrated.version).toBe(5)
+    expect(migrated.version).toBe(6)
     expect(migrated.people.every((person) => person.deathDate === '')).toBe(true)
     expect(migrated.pets.every((pet) => pet.deathDate === '')).toBe(true)
     expect(migrated.pets.find((pet) => pet.id === 'iring-brown')?.birthDate).toBe('2013')
@@ -201,7 +201,7 @@ describe('age, ordering, and migration', () => {
 describe('preserved archive data', () => {
   it('keeps all family edits, core protections, numbered portraits, and the pet founder', () => {
     const data = fresh()
-    expect(data.version).toBe(5)
+    expect(data.version).toBe(6)
     expect(data.people).toHaveLength(24)
     expect(data.people.filter((person) => person.protected)).toHaveLength(9)
     expect(new Set(data.people.map((person) => person.portraitNumber)).size).toBe(24)
@@ -221,9 +221,9 @@ describe('preserved archive data', () => {
 })
 
 describe('published archive data', () => {
-  it('keeps the renamed records and validates the current public version-5 archive', () => {
+  it('keeps the renamed records and validates the current public version-6 archive', () => {
     const data = structuredClone(publishedArchive) as TreeData
-    expect(data.version).toBe(5)
+    expect(data.version).toBe(6)
     expect(data.people).toHaveLength(26)
     expect(data.pets).toHaveLength(3)
     expect(data.families).toHaveLength(9)
@@ -407,7 +407,7 @@ describe('editing operations', () => {
     expect(planPersonDeletion(data, ['temporary-parent']).blockedReason).toMatch(/protected record Father/)
   })
 
-  it('supports pet ownership, lineage, protections, and version-5 multi-link export round trips', () => {
+  it('supports pet ownership, lineage, protections, and version-6 multi-link export round trips', () => {
     const data = fresh()
     const pet = { ...createBlankPet('luna', 'Luna', 2), species: 'Dog', ownerPersonId: 'child-2', links: ['https://example.com/luna', 'https://example.com/video'] }
     const withPet = { ...data, pets: [...data.pets, pet] }

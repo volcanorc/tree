@@ -32,6 +32,7 @@ import {
   validateTreeData,
 } from '../lib/data'
 import { verifyLogin } from '../lib/auth'
+import { lineageSurnameAfterNameChange } from '../lib/lineage'
 import { useCurrentDate } from '../hooks/useCurrentDate'
 import { LineageGraph } from './LineageGraph'
 
@@ -57,8 +58,15 @@ const textFields: Array<{
   label: string
   placeholder?: string
   textarea?: boolean
+  helper?: string
 }> = [
   { key: 'displayName', label: 'Display name', placeholder: 'Full or public name' },
+  {
+    key: 'lineageSurname',
+    label: 'Lineage surname',
+    placeholder: 'Inherited or birth family name',
+    helper: 'The inherited or birth family line; this may differ from a current married surname.',
+  },
   { key: 'nickname', label: 'Nickname', placeholder: '?' },
   { key: 'birthDate', label: 'Birth date', placeholder: 'YYYY-MM-DD' },
   { key: 'birthDetails', label: 'Born / origin details', placeholder: 'Shown when birth date is empty' },
@@ -70,6 +78,7 @@ const textFields: Array<{
 
 const PERSON_NEW_RECORD_FIELDS = new Set<keyof Person>([
   'displayName',
+  'lineageSurname',
   'nickname',
   'birthDate',
   'birthDetails',
@@ -109,6 +118,7 @@ const PET_NEW_RECORD_FIELDS = new Set<keyof Pet>([
 ])
 
 const PERSON_COMPLETENESS_FIELDS = new Set<keyof Person>([
+  'lineageSurname',
   'nickname',
   'birthDetails',
   'personality',
@@ -448,9 +458,12 @@ export function Dashboard(props: DashboardProps) {
 
   function updatePerson(patch: Partial<Person>) {
     if (!selectedPerson) return
+    const synchronizedPatch = patch.displayName !== undefined && patch.lineageSurname === undefined
+      ? { ...patch, lineageSurname: lineageSurnameAfterNameChange(selectedPerson, patch.displayName) }
+      : patch
     onChange({
       ...data,
-      people: data.people.map((person) => (person.id === selectedPerson.id ? { ...person, ...patch } : person)),
+      people: data.people.map((person) => (person.id === selectedPerson.id ? { ...person, ...synchronizedPatch } : person)),
     })
   }
 
@@ -999,6 +1012,7 @@ export function Dashboard(props: DashboardProps) {
                         {field.label}
                         {field.textarea ? (
                           <textarea
+                            aria-label={field.label}
                             value={String(selectedPerson[field.key] ?? '')}
                             placeholder={field.placeholder}
                             onFocus={() => acknowledgeFieldAttention('person', selectedPerson.id, field.key)}
@@ -1008,6 +1022,7 @@ export function Dashboard(props: DashboardProps) {
                           />
                         ) : (
                           <input
+                            aria-label={field.label}
                             value={String(selectedPerson[field.key] ?? '')}
                             placeholder={field.placeholder}
                             type={field.key === 'birthDate' ? 'date' : 'text'}
@@ -1024,6 +1039,7 @@ export function Dashboard(props: DashboardProps) {
                         {field.key === 'portrait' && !isSafePortrait(selectedPerson.portrait) && (
                           <small className="field-warning">Use a repository PNG path or HTTPS PNG URL.</small>
                         )}
+                        {field.helper && <small>{field.helper}</small>}
                       </label>
                     )})}
                     <LinkEditor

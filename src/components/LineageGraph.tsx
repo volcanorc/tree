@@ -25,6 +25,7 @@ import {
   yearFromDate,
 } from '../lib/data'
 import { useCurrentDate } from '../hooks/useCurrentDate'
+import { classifyFamilyLine, familyLineOptions, type FamilyLineClassification } from '../lib/lineage'
 import type { ArchiveEditIntent, ArchiveEntityPatch, FamilyUnit, Gender, LifeStatus, Person, Pet, PetFamilyUnit } from '../types'
 
 type Entity = Person | Pet
@@ -51,6 +52,8 @@ interface ConnectorPath {
   familyId: string
   kind: 'union' | 'family-stem' | 'child'
   parentIds: string[]
+  sourceParentId?: string
+  childId?: string
   d: string
 }
 
@@ -92,7 +95,8 @@ interface LineageGraphProps {
   onToggleFullscreen?: (trigger?: HTMLElement) => void
 }
 
-type HighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female'
+type HighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female' | `lineage:${string}`
+type FamilyLineProfileRole = 'member' | 'partner' | 'none'
 
 interface HoverState {
   entity: Entity
@@ -325,6 +329,7 @@ function EntityCard({
   pinnedEntityId,
   focusedEntityId,
   recentEntityId,
+  familyLineRole = 'none',
   onHover,
   onLeave,
   onActivate,
@@ -335,6 +340,7 @@ function EntityCard({
   pinnedEntityId: string | null
   focusedEntityId: string | null
   recentEntityId?: string | null
+  familyLineRole?: FamilyLineProfileRole
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onActivate: (entity: Entity) => void
@@ -410,6 +416,7 @@ function EntityCard({
       data-entity-id={entity.id}
       data-status={entity.status}
       data-gender={entity.gender}
+      data-lineage-role={familyLineRole}
       data-layout-slot={layoutSlot}
       aria-label={`${displayValue(entity.displayName)} details${safeLinks.length > 0 ? `, ${safeLinks.length} profile ${safeLinks.length === 1 ? 'link' : 'links'} available` : ''}${focusedEntityId === entity.id ? ', navigation target' : ''}`}
       aria-expanded={pinnedEntityId === entity.id}
@@ -719,6 +726,7 @@ function DetailPopover({
         { label: 'Personality', value: displayValue(entity.personality), field: 'personality' },
       ]
     : [
+        { label: 'Family line', value: displayValue(entity.lineageSurname) },
         { label: 'Age', value: age },
         { label: 'Born', value: bornValue(entity), field: 'birthDate' },
         ...diedRows,
@@ -851,6 +859,7 @@ function LineageBranch({
   pinnedEntityId,
   focusedEntityId,
   recentEntityId,
+  familyLineRoles,
   onHover,
   onLeave,
   onActivate,
@@ -863,6 +872,7 @@ function LineageBranch({
   pinnedEntityId: string | null
   focusedEntityId: string | null
   recentEntityId?: string | null
+  familyLineRoles: Map<string, FamilyLineProfileRole>
   onHover: (entity: Entity, x: number, y: number) => void
   onLeave: () => void
   onActivate: (entity: Entity) => void
@@ -875,7 +885,7 @@ function LineageBranch({
     return (
       <div className="lineage-branch">
         <div className="partner-group-row">
-          <EntityCard entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+          <EntityCard entity={entity} owner={owner} familyLineRole={familyLineRoles.get(entity.id)} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         </div>
       </div>
     )
@@ -898,7 +908,7 @@ function LineageBranch({
           const groupEntity = entities.get(groupEntityId)
           if (!groupEntity) return null
           const owner = isPet(groupEntity) ? people.find((person) => person.id === groupEntity.ownerPersonId) : undefined
-          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} layoutSlot={group.layoutSlots[groupEntityId]} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+          return <EntityCard key={groupEntityId} entity={groupEntity} owner={owner} familyLineRole={familyLineRoles.get(groupEntity.id)} layoutSlot={group.layoutSlots[groupEntityId]} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
         })}
       </div>
       {group.families.length > 0 && (
@@ -919,6 +929,7 @@ function LineageBranch({
                       pinnedEntityId={pinnedEntityId}
                       focusedEntityId={focusedEntityId}
                       recentEntityId={recentEntityId}
+                      familyLineRoles={familyLineRoles}
                       onHover={onHover}
                       onLeave={onLeave}
                       onActivate={onActivate}
@@ -1050,6 +1061,24 @@ export function LineageGraph({
       : petFamilies.map((family) => ({ id: family.id, parentIds: family.parentPetIds, children: family.children.map((child) => ({ entityId: child.petId, birthOrder: child.birthOrder })) })),
     [mode, families, petFamilies],
   )
+  const availableFamilyLines = useMemo(() => mode === 'people' ? familyLineOptions(people) : [], [mode, people])
+  const selectedFamilyLine = highlightFilter.startsWith('lineage:') ? highlightFilter.slice('lineage:'.length) : ''
+  const familyLineClassification = useMemo<FamilyLineClassification | null>(
+    () => mode === 'people' && selectedFamilyLine
+      ? classifyFamilyLine(people, families, selectedFamilyLine)
+      : null,
+    [families, mode, people, selectedFamilyLine],
+  )
+  const familyLineRoles = useMemo(() => {
+    const roles = new Map<string, FamilyLineProfileRole>()
+    if (!familyLineClassification) return roles
+    people.forEach((person) => {
+      roles.set(person.id, familyLineClassification.memberIds.has(person.id)
+        ? 'member'
+        : familyLineClassification.partnerIds.has(person.id) ? 'partner' : 'none')
+    })
+    return roles
+  }, [familyLineClassification, people])
   const { groups: partnerGroups, groupByEntity } = useMemo(() => buildPartnerGroups(normalizedFamilies), [normalizedFamilies])
   const petYearBands = useMemo(() => buildPetYearBands(pets), [pets])
   const petSpeciesColumns = useMemo(() => buildPetSpeciesColumns(pets, petYearBands), [petYearBands, pets])
@@ -1187,6 +1216,7 @@ export function LineageGraph({
             familyId: family.id,
             kind: 'child',
             parentIds: family.parentIds,
+            childId: child.entityId,
             d: `M ${start.x} ${start.y} V ${midY} H ${end.x} V ${end.y}`,
           })
         })
@@ -1215,14 +1245,20 @@ export function LineageGraph({
               .map((element) => pointInCanvas(element, 'center'))
               .filter((point) => point.x > leftX && point.x < rightX)
           : []
-        let d = `M ${parentPoints[0].x} ${parentPoints[0].y} H ${parentPoints[1].x}`
+        const midpointX = (parentPoints[0].x + parentPoints[1].x) / 2
+        let firstHalf = `M ${parentPoints[0].x} ${parentPoints[0].y} H ${midpointX}`
+        let secondHalf = `M ${midpointX} ${parentPoints[1].y} H ${parentPoints[1].x}`
         if (blockers.length) {
           const bottomPoints = parentElements.map((element) => pointInCanvas(element, 'bottom'))
           const railY = Math.max(bottomPoints[0].y, bottomPoints[1].y) + 10 + blockers.length * 10
-          d = `M ${bottomPoints[0].x} ${bottomPoints[0].y} V ${railY} H ${bottomPoints[1].x} V ${bottomPoints[1].y}`
+          firstHalf = `M ${bottomPoints[0].x} ${bottomPoints[0].y} V ${railY} H ${midpointX}`
+          secondHalf = `M ${midpointX} ${railY} H ${bottomPoints[1].x} V ${bottomPoints[1].y}`
           start = { x: (bottomPoints[0].x + bottomPoints[1].x) / 2, y: railY }
         }
-        next.push({ id: `${family.id}-union`, familyId: family.id, kind: 'union', parentIds: family.parentIds, d })
+        next.push(
+          { id: `${family.id}-union-1`, familyId: family.id, kind: 'union', parentIds: family.parentIds, sourceParentId: family.parentIds[0], d: firstHalf },
+          { id: `${family.id}-union-2`, familyId: family.id, kind: 'union', parentIds: family.parentIds, sourceParentId: family.parentIds[1], d: secondHalf },
+        )
       }
       const anchorPoint = pointInCanvas(anchor, 'center')
       if (family.children.length > 0) next.push({
@@ -1242,6 +1278,7 @@ export function LineageGraph({
           familyId: family.id,
           kind: 'child',
           parentIds: family.parentIds,
+          childId: child.entityId,
           d: `M ${anchorPoint.x} ${anchorPoint.y} V ${midY} H ${end.x} V ${end.y}`,
         })
       })
@@ -1425,12 +1462,25 @@ export function LineageGraph({
     setPinnedEntityId((current) => current === entity.id ? null : entity.id)
   }
 
+  const connectorFamilyLineRole = (path: ConnectorPath): 'carrier' | 'partner' | 'black' | undefined => {
+    if (!familyLineClassification) return undefined
+    const carrierId = familyLineClassification.carrierByFamilyId.get(path.familyId)
+    if (path.kind === 'union') {
+      if (!carrierId || !path.sourceParentId) return 'black'
+      return path.sourceParentId === carrierId ? 'carrier' : 'partner'
+    }
+    if (path.kind === 'family-stem') {
+      return familyLineClassification.continuingFamilyIds.has(path.familyId) ? 'carrier' : 'black'
+    }
+    return path.childId && familyLineClassification.continuingChildIds.has(path.childId) ? 'carrier' : 'black'
+  }
+
   if (entities.size === 0) {
     return <div className="empty-lineage"><span className="empty-orbit" aria-hidden="true">✦</span><h2>No pets have been added yet</h2><p>Log in to the dashboard to add pets, owners, and lineage connections.</p></div>
   }
 
   return (
-    <section className={`lineage-section highlight-${highlightFilter}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
+    <section className={`lineage-section ${selectedFamilyLine ? 'highlight-lineage' : `highlight-${highlightFilter}`}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
       <div className="graph-toolbar">
         <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
@@ -1472,6 +1522,13 @@ export function LineageGraph({
             <option value="alive">Alive</option>
             <option value="male">Male</option>
             <option value="female">Female</option>
+            {mode === 'people' && availableFamilyLines.length > 0 && (
+              <optgroup label="Family lines">
+                {availableFamilyLines.map((option) => (
+                  <option value={`lineage:${option.key}`} key={option.key}>Family · {option.label}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} inert={interactionLocked || undefined} aria-hidden={interactionLocked || undefined} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
@@ -1483,6 +1540,9 @@ export function LineageGraph({
                 data-family-connector={path.familyId}
                 data-connector-kind={path.kind}
                 data-parent-ids={path.parentIds.join(' ')}
+                data-source-parent-id={path.sourceParentId}
+                data-child-id={path.childId}
+                data-lineage-path-role={connectorFamilyLineRole(path)}
               />
             ))}
           </svg>
@@ -1490,7 +1550,7 @@ export function LineageGraph({
             <PetYearTimeline bands={petYearBands} speciesColumns={petSpeciesColumns} families={normalizedFamilies} people={people} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
           ) : (
             <div className="root-forest">
-              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />)}
+              {rootGroups.map((group) => <LineageBranch key={group.id} entityId={group.entryEntityId} entities={entities} groupByEntity={groupByEntity} people={people} path={new Set()} familyLineRoles={familyLineRoles} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />)}
             </div>
           )}
           {mode === 'people' && standalone.length > 0 && (
@@ -1499,7 +1559,7 @@ export function LineageGraph({
                 const entity = entities.get(id)
                 if (!entity) return null
                 const owner = isPet(entity) ? people.find((person) => person.id === entity.ownerPersonId) : undefined
-                return <EntityCard key={id} entity={entity} owner={owner} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
+                return <EntityCard key={id} entity={entity} owner={owner} familyLineRole={familyLineRoles.get(entity.id)} pinnedEntityId={pinnedEntityId} focusedEntityId={focusedEntityId} recentEntityId={recentEntityId} onHover={onHover} onLeave={onLeave} onActivate={onActivate} />
               })}
             </div>
           )}

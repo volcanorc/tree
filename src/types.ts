@@ -28,6 +28,7 @@ export interface SiteConfig {
 export interface Person {
   id: string
   displayName: string
+  lineageSurname: string
   nickname: string
   gender: Gender
   birthDate: string
@@ -88,7 +89,7 @@ export interface PetFamilyUnit {
 }
 
 export interface TreeData {
-  version: 5
+  version: 6
   site: SiteConfig
   people: Person[]
   families: FamilyUnit[]

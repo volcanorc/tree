@@ -136,9 +136,9 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .lineage-viewport:active { cursor: grabbing; }
 .lineage-viewport.is-locked, .lineage-viewport.is-locked:active { cursor: default; touch-action: pan-y; }
 .lineage-viewport:focus-visible { outline: 1px solid var(--copper); outline-offset: -2px; }
-.highlight-control { position: absolute; left: 12px; top: 12px; z-index: 95; width: 112px; display: grid; gap: 5px; padding: 8px 9px; border: 1px solid rgba(167,185,210,.18); border-radius: 4px; background: rgba(7,12,20,.9); box-shadow: 0 10px 30px rgba(0,0,0,.34); color: #738096; font-size: .54rem; letter-spacing: .12em; text-transform: uppercase; cursor: default; }
+.highlight-control { position: absolute; left: 12px; top: 12px; z-index: 95; width: 158px; display: grid; gap: 5px; padding: 8px 9px; border: 1px solid rgba(167,185,210,.18); border-radius: 4px; background: rgba(7,12,20,.9); box-shadow: 0 10px 30px rgba(0,0,0,.34); color: #738096; font-size: .54rem; letter-spacing: .12em; text-transform: uppercase; cursor: default; }
 .highlight-control select { min-height: 29px; padding: 5px 25px 5px 8px; border-color: rgba(200,131,85,.38); appearance: none; color-scheme: dark; background-color: #080e17; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23c88355' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-position: right 8px center; background-repeat: no-repeat; color: #c5ccd6; font-size: .65rem; letter-spacing: .06em; }
-.highlight-control select option { background: #080e17; color: #c5ccd6; }
+.highlight-control select option, .highlight-control select optgroup { background: #080e17; color: #c5ccd6; }
 .lineage-canvas { position: absolute; min-height: 650px; transform-origin: top left; transition: transform 180ms cubic-bezier(.2,.75,.35,1); }
 .lineage-viewport.is-interacting .lineage-canvas { transition: none; }
 .lineage-viewport.is-owner-focusing .lineage-canvas { transition-duration: 520ms; transition-timing-function: cubic-bezier(.2,.8,.25,1); }
@@ -194,6 +194,42 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 @keyframes profile-highlight-pulse {
   0%, 100% { box-shadow: 0 0 0 6px rgba(var(--highlight-rgb),.21), 0 0 36px rgba(var(--highlight-rgb),.42), 0 12px 38px rgba(0,0,0,.4); }
   50% { box-shadow: 0 0 0 12px rgba(var(--highlight-rgb),.42), 0 0 72px rgba(var(--highlight-rgb),.86), 0 12px 38px rgba(0,0,0,.45); }
+}
+.lineage-section.highlight-lineage .entity-card:not(.is-active):not(.is-owner-target) .portrait-ring {
+  border-color: #000;
+  background: linear-gradient(135deg, rgba(0,0,0,.72), rgba(4,6,9,.36));
+  box-shadow: 0 0 0 5px rgba(0,0,0,.72), 0 0 24px rgba(0,0,0,.94), 0 12px 38px rgba(0,0,0,.48);
+}
+.lineage-section.highlight-lineage .entity-card[data-lineage-role="member"]:not(.is-active):not(.is-owner-target) .portrait-ring {
+  --highlight-color: #6fcf97;
+  --highlight-rgb: 111,207,151;
+  border-width: 3px;
+  border-color: var(--highlight-color);
+  animation: profile-highlight-pulse 1500ms ease-in-out infinite;
+}
+.lineage-section.highlight-lineage .entity-card[data-lineage-role="partner"]:not(.is-active):not(.is-owner-target) .portrait-ring {
+  --highlight-color: #ff5c9a;
+  --highlight-rgb: 255,92,154;
+  border-width: 3px;
+  border-color: var(--highlight-color);
+  animation: profile-highlight-pulse 1500ms ease-in-out infinite;
+}
+.lineage-section.highlight-lineage .connector-layer path { stroke: #000; stroke-width: 2.2; filter: drop-shadow(0 0 5px rgba(0,0,0,.96)); }
+.lineage-section.highlight-lineage .connector-layer path[data-lineage-path-role="carrier"] {
+  --connector-rgb: 111,207,151;
+  stroke: #6fcf97;
+  stroke-width: 3;
+  animation: lineage-connector-pulse 1500ms ease-in-out infinite;
+}
+.lineage-section.highlight-lineage .connector-layer path[data-lineage-path-role="partner"] {
+  --connector-rgb: 255,92,154;
+  stroke: #ff5c9a;
+  stroke-width: 3;
+  animation: lineage-connector-pulse 1500ms ease-in-out infinite;
+}
+@keyframes lineage-connector-pulse {
+  0%, 100% { filter: drop-shadow(0 0 5px rgba(var(--connector-rgb),.58)) drop-shadow(0 0 12px rgba(var(--connector-rgb),.38)); }
+  50% { filter: drop-shadow(0 0 10px rgba(var(--connector-rgb),.92)) drop-shadow(0 0 26px rgba(var(--connector-rgb),.7)); }
 }
 .entity-card.is-owner-target .portrait-ring { border-width: 3px; border-color: var(--owner-focus-green); animation: owner-target-pulse 1450ms ease-in-out infinite; }
 .entity-card.is-active .portrait-ring { border-width: 3px; border-color: var(--active-gold); box-shadow: var(--active-gold-glow); animation: none; }
@@ -526,4 +562,8 @@ label small { color: #687487; line-height: 1.4; text-transform: none; letter-spa
   .lineage-section:where(.highlight-alive) :where(.entity-card[data-status="alive"]:not(.is-active):not(.is-owner-target)) .portrait-ring,
   .lineage-section:where(.highlight-male) :where(.entity-card[data-gender="male"]:not(.is-active):not(.is-owner-target)) .portrait-ring,
   .lineage-section:where(.highlight-female) :where(.entity-card[data-gender="female"]:not(.is-active):not(.is-owner-target)) .portrait-ring { animation: none !important; box-shadow: 0 0 0 9px rgba(var(--highlight-rgb),.39), 0 0 54px rgba(var(--highlight-rgb),.84); }
+  .lineage-section.highlight-lineage .entity-card[data-lineage-role="member"]:not(.is-active):not(.is-owner-target) .portrait-ring,
+  .lineage-section.highlight-lineage .entity-card[data-lineage-role="partner"]:not(.is-active):not(.is-owner-target) .portrait-ring { animation: none !important; box-shadow: 0 0 0 9px rgba(var(--highlight-rgb),.39), 0 0 54px rgba(var(--highlight-rgb),.84); }
+  .lineage-section.highlight-lineage .connector-layer path[data-lineage-path-role="carrier"],
+  .lineage-section.highlight-lineage .connector-layer path[data-lineage-path-role="partner"] { animation: none !important; filter: drop-shadow(0 0 9px rgba(var(--connector-rgb),.88)) drop-shadow(0 0 22px rgba(var(--connector-rgb),.62)); }
 }

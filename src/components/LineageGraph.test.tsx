@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import seed from '../test/fixtures/tree-data-v4.json'
+import publishedArchive from '../../public/tree-data.json'
 import type { ArchiveEditIntent, ArchiveEntityPatch, TreeData } from '../types'
 import { addPartner, createBlankPet } from '../lib/data'
 import { LineageGraph } from './LineageGraph'
@@ -224,6 +225,53 @@ describe('LineageGraph details and portraits', () => {
     const tooltip = screen.getByRole('tooltip', { name: /Iring Brown details/i })
     expect(tooltip).toHaveTextContent('BornMarch 2020')
     expect(tooltip).toHaveTextContent('DiedDecember 9 2024')
+  })
+})
+
+describe('LineageGraph family-line highlights', () => {
+  it('offers alphabetical people-only family lines and explains the selected profile line', async () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { unmount } = renderGraph(data)
+    const select = screen.getByRole('combobox', { name: 'Highlight profiles' })
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Set', 'Dead', 'Alive', 'Male', 'Female',
+      'Family · Bering', 'Family · Castaneda', 'Family · Ermac', 'Family · Sullano', 'Family · Tayad',
+    ])
+    fireEvent.pointerUp(screen.getByRole('button', { name: /Nemisio Sullano details/i }), { pointerType: 'mouse', button: 0 })
+    expect(screen.getByLabelText('Nemisio Sullano details', { selector: 'aside' })).toHaveTextContent('Family lineSullano')
+
+    unmount()
+    renderGraph(data, 'pets')
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Set', 'Dead', 'Alive', 'Male', 'Female'])
+  })
+
+  it('classifies Sullano members, introduced partners, stopped branches, and split connectors', async () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Highlight profiles' }), { target: { value: 'lineage:sullano' } })
+
+    expect(container.querySelector('[data-entity-id="father"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="mother"]')).toHaveAttribute('data-lineage-role', 'partner')
+    expect(container.querySelector('[data-entity-id="child-2"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'partner')
+    expect(container.querySelector('[data-entity-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-role', 'none')
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-family-connector="root-family"][data-source-parent-id="father"]')).toHaveAttribute('data-lineage-path-role', 'carrier')
+      expect(container.querySelector('[data-family-connector="root-family"][data-source-parent-id="mother"]')).toHaveAttribute('data-lineage-path-role', 'partner')
+      expect(container.querySelector('[data-family-connector="root-family"][data-child-id="child-2"]')).toHaveAttribute('data-lineage-path-role', 'carrier')
+      expect(container.querySelector('[data-family-connector="family-child-2"][data-child-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-path-role', 'black')
+      expect(container.querySelector('[data-family-connector="family-child-2"][data-connector-kind="family-stem"]')).toHaveAttribute('data-lineage-path-role', 'black')
+    })
+  })
+
+  it('reverse-filters Bering with its parent green and Sullano partner pink', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Highlight profiles' }), { target: { value: 'lineage:bering' } })
+    expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="child-2"]')).toHaveAttribute('data-lineage-role', 'partner')
+    expect(container.querySelector('[data-entity-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-role', 'member')
   })
 })
 

@@ -18,6 +18,7 @@ import {
   planPetDeletion,
   validateTreeData,
 } from './lib/data'
+import { lineageSurnameAfterNameChange } from './lib/lineage'
 import type {
   ArchiveEditIntent,
   ArchiveEditRequest,
@@ -428,7 +429,10 @@ export default function App() {
     if (request.kind === 'person') {
       const current = data.people.find((person) => person.id === request.entityId)
       if (!current) return 'Person not found.'
-      const updated = { ...current, ...request.patch }
+      const synchronizedPatch = request.patch.displayName !== undefined && request.patch.lineageSurname === undefined
+        ? { ...request.patch, lineageSurname: lineageSurnameAfterNameChange(current, request.patch.displayName) }
+        : request.patch
+      const updated = { ...current, ...synchronizedPatch }
       if (!updated.displayName.trim()) return 'Name is required.'
       if (updated.status === 'alive') updated.deathDate = ''
       next = { ...data, people: data.people.map((person) => person.id === request.entityId ? updated : person) }

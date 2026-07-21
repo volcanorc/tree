@@ -81,7 +81,7 @@ describe('Dashboard layout and people editor', () => {
 
   it('keeps incomplete existing person fields visible until each one is acknowledged', () => {
     const list = openPeople()
-    for (const label of ['Nickname', 'Born / origin details', 'Personality', 'Short biography', 'Profile link 1']) {
+    for (const label of ['Lineage surname', 'Nickname', 'Born / origin details', 'Personality', 'Short biography', 'Profile link 1']) {
       expect(screen.getByLabelText(label).closest('label')).toHaveClass('new-record-field-attention')
     }
     for (const label of ['Display name', 'Birth date', 'Gender', 'Status', 'Portrait path or HTTPS PNG URL']) {
@@ -98,6 +98,21 @@ describe('Dashboard layout and people editor', () => {
     expect(screen.getByLabelText('Gender').closest('label')).toHaveClass('new-record-field-attention')
     fireEvent.focus(screen.getByLabelText('Gender'))
     expect(screen.getByLabelText('Gender').closest('label')).not.toHaveClass('new-record-field-attention')
+  })
+
+  it('shows lineage guidance and synchronizes only automatic surname suggestions', () => {
+    const initial = structuredClone(seed) as TreeData
+    initial.people[0].displayName = 'Mark Grad Jr.'
+    initial.people[0].lineageSurname = 'Grad'
+    render(<DashboardHarness initial={initial} />)
+    fireEvent.click(screen.getByRole('button', { name: 'People' }))
+
+    expect(screen.getByText(/inherited or birth family line/i)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Mark Santos Jr.' } })
+    expect(screen.getByLabelText('Lineage surname')).toHaveValue('Santos')
+    fireEvent.change(screen.getByLabelText('Lineage surname'), { target: { value: 'Custom Compound' } })
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Mark Reyes Jr.' } })
+    expect(screen.getByLabelText('Lineage surname')).toHaveValue('Custom Compound')
   })
 
   it('restores incomplete-field cues after reload and clears acknowledgements on reset', () => {
@@ -125,7 +140,7 @@ describe('Dashboard layout and people editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add child' }))
     const displayName = screen.getByLabelText('Display name')
     expect(displayName).toHaveValue('New child')
-    for (const label of ['Display name', 'Nickname', 'Birth date', 'Born / origin details', 'Personality', 'Short biography', 'Profile link 1', 'Gender']) {
+    for (const label of ['Display name', 'Lineage surname', 'Nickname', 'Birth date', 'Born / origin details', 'Personality', 'Short biography', 'Profile link 1', 'Gender']) {
       expect(screen.getByLabelText(label).closest('label')).toHaveClass('new-record-field-attention')
     }
     for (const label of ['Relationship label', 'Portrait path or HTTPS PNG URL', 'Status']) {

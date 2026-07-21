@@ -13,6 +13,7 @@ import type {
   TreeData,
   ValidationResult,
 } from '../types'
+import { inferLineageSurname, resolveChildLineageSurname } from './lineage'
 
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:'])
 const CORE_PERSON_IDS = ['father', 'mother', 'child-1', 'child-2', 'child-3', 'child-4', 'child-5', 'child-6', 'child-7']
@@ -415,9 +416,9 @@ export function migrateTreeData(input: unknown): TreeData {
     petFamilies?: Array<Partial<PetFamilyUnit>>
   }
   const raw = input as LegacyTreeData
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4 && raw.version !== 5) throw new Error('Unsupported or missing data version.')
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4 && raw.version !== 5 && raw.version !== 6) throw new Error('Unsupported or missing data version.')
   const rawPeople = Array.isArray(raw.people) ? raw.people : []
-  const hasVersionTwoFields = raw.version === 2 || raw.version === 3 || raw.version === 4 || raw.version === 5
+  const hasVersionTwoFields = raw.version === 2 || raw.version === 3 || raw.version === 4 || raw.version === 5 || raw.version === 6
   const occupied = new Set<number>()
   if (hasVersionTwoFields) {
     rawPeople.forEach((person) => {
@@ -443,9 +444,13 @@ export function migrateTreeData(input: unknown): TreeData {
     const links = Array.isArray(person.links)
       ? person.links.map(stringValue)
       : stringValue(person.link) ? [stringValue(person.link)] : []
+    const storedLineageSurname = stringValue(person.lineageSurname)
     return {
       id: stringValue(person.id),
       displayName: stringValue(person.displayName),
+      lineageSurname: raw.version === 6
+        ? storedLineageSurname.trim() === '?' ? '' : storedLineageSurname
+        : inferLineageSurname(stringValue(person.displayName)),
       nickname: stringValue(person.nickname),
       gender: (person.gender ?? 'unknown') as Gender,
       birthDate: stringValue(person.birthDate),
@@ -464,7 +469,7 @@ export function migrateTreeData(input: unknown): TreeData {
   })
   const rawPets = Array.isArray(raw.pets) ? raw.pets : []
   const occupiedPetPortraits = new Set<number>()
-  if (raw.version === 3 || raw.version === 4 || raw.version === 5) {
+  if (raw.version === 3 || raw.version === 4 || raw.version === 5 || raw.version === 6) {
     rawPets.forEach((pet) => {
       if (Number.isInteger(pet.portraitNumber) && Number(pet.portraitNumber) > 0) occupiedPetPortraits.add(Number(pet.portraitNumber))
     })
@@ -480,7 +485,7 @@ export function migrateTreeData(input: unknown): TreeData {
     return number
   }
   const pets: Pet[] = rawPets.map((pet) => {
-    const portraitNumber = raw.version === 3 || raw.version === 4 || raw.version === 5
+    const portraitNumber = raw.version === 3 || raw.version === 4 || raw.version === 5 || raw.version === 6
       ? Number(pet.portraitNumber)
       : stringValue(pet.id) === 'iring-brown' ? 1 : takeNextPetPortrait()
     const links = Array.isArray(pet.links)
@@ -516,7 +521,7 @@ export function migrateTreeData(input: unknown): TreeData {
   const title = stringValue(site.title)
   const subtitle = stringValue(site.subtitle)
   return {
-    version: 5,
+    version: 6,
     site: {
       title: !title.trim() || title.trim() === OLD_DEFAULT_TITLE ? DEFAULT_TITLE : title,
       subtitle: !subtitle || subtitle === OLD_DEFAULT_SUBTITLE ? DEFAULT_SUBTITLE : subtitle,
@@ -545,7 +550,7 @@ export function migrateTreeData(input: unknown): TreeData {
 
 export function validateTreeData(data: TreeData): ValidationResult {
   const errors: string[] = []
-  if (!data || data.version !== 5) errors.push('Unsupported or missing data version.')
+  if (!data || data.version !== 6) errors.push('Unsupported or missing data version.')
   if (!data.site?.title?.trim()) errors.push('The site title is required.')
 
   const personIds = data.people.map((person) => person.id)
@@ -673,6 +678,7 @@ export function createBlankPerson(id: string, label: string, portraitNumber = 1)
   return {
     id,
     displayName: label,
+    lineageSurname: inferLineageSurname(label),
     nickname: '',
     gender: 'unknown',
     birthDate: '',
@@ -726,9 +732,11 @@ export function addChild(data: TreeData, parentId: string, label = 'New child', 
     if (applicable.length === 1) familyIndex = applicable[0].index
   }
   if (familyIndex >= 0) {
+    person.lineageSurname = resolveChildLineageSurname(data.people, families[familyIndex])
     const nextOrder = Math.max(0, ...families[familyIndex].children.map((child) => child.birthOrder)) + 1
     families[familyIndex].children.push({ personId: id, birthOrder: nextOrder })
   } else {
+    person.lineageSurname = data.people.find((candidate) => candidate.id === parentId)?.lineageSurname ?? ''
     families.push({
       id: makeId(`family-${parentId}`, families.map((family) => family.id)),
       parentIds: [parentId],
@@ -762,6 +770,7 @@ export function addSibling(data: TreeData, personId: string, label = 'New siblin
   if (familyIndex < 0) return data
   const id = makeId(label, data.people.map((person) => person.id))
   const person = createBlankPerson(id, label, nextPortraitNumber(data))
+  person.lineageSurname = data.people.find((candidate) => candidate.id === personId)?.lineageSurname ?? ''
   const families = data.families.map((family, index) => {
     if (index !== familyIndex) return family
     const nextOrder = Math.max(0, ...family.children.map((child) => child.birthOrder)) + 1

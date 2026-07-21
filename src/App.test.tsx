@@ -57,7 +57,7 @@ describe('App draft recovery', () => {
     expect(await screen.findByRole('heading', { name: 'The Lineage Archive' })).toBeInTheDocument()
     expect(screen.getByText('Local draft active')).toBeInTheDocument()
     const stored = JSON.parse(localStorage.getItem(DRAFT_KEY)!)
-    expect(stored.version).toBe(5)
+    expect(stored.version).toBe(6)
     expect(stored.people[0].deathDate).toBe('')
     expect(stored.people[0].links).toEqual(['https://example.com/father'])
     expect(stored.site.adminUser).toBe(seed.site.adminUser)
@@ -71,7 +71,7 @@ describe('App draft recovery', () => {
     }))
   })
 
-  it('discards an invalid draft and uses published version-5 data with the revised family heading', async () => {
+  it('discards an invalid draft and uses published version-6 data with the revised family heading', async () => {
     mockPublishedData()
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 99 }))
     render(<App />)
