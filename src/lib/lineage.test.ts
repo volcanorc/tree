@@ -40,10 +40,11 @@ describe('lineage surname parsing and migration', () => {
     const people = old.people as Array<Record<string, unknown>>
     people.forEach((person) => { delete person.lineageSurname })
     people[0].displayName = 'Mark Grad Jr.'
+    people[1].displayName = 'Junel'
     const migrated = migrateTreeData(old)
     expect(migrated.version).toBe(6)
     expect(migrated.people[0].lineageSurname).toBe('Grad')
-    expect(migrated.people.find((person) => person.displayName === 'Junel')?.lineageSurname).toBe('')
+    expect(migrated.people[1].lineageSurname).toBe('')
 
     const current = published()
     current.people[0].lineageSurname = 'Custom Compound'
@@ -54,7 +55,7 @@ describe('lineage surname parsing and migration', () => {
     const data = published()
     data.people[0].lineageSurname = 'sullano'
     expect(familyLineOptions(data.people).map((option) => option.key)).toEqual([
-      'bering', 'castaneda', 'ermac', 'sullano', 'tayad',
+      'bering', 'castaneda', 'enares', 'ermac', 'sullano', 'tayad', 'vidal',
     ])
   })
 })
@@ -67,7 +68,7 @@ describe('family-line inheritance and classification', () => {
     expect(result.memberIds.has('grandchild-2-1')).toBe(false)
     expect(result.continuingChildIds.has('grandchild-2-1')).toBe(false)
     expect(result.continuingFamilyIds.has('family-child-2')).toBe(false)
-    expect(result.memberIds.has('grandchild-5-2')).toBe(true)
+    expect(result.memberIds.has('new-sibling')).toBe(true)
     expect(result.continuingFamilyIds.has('family-child-5')).toBe(true)
   })
 
@@ -111,7 +112,7 @@ describe('family-line inheritance and classification', () => {
     expect(result.continuingFamilyIds.has('family-child-1-2')).toBe(false)
   })
 
-  it('handles a same-gender Vidal origin for one generation without surname-specific logic', () => {
+  it('handles a same-gender lineage origin for one generation without surname-specific logic', () => {
     const data = published()
     const sullanoParent = data.people.find((person) => person.id === 'child-1')!
     const templatePartner = data.people.find((person) => person.id === 'new-partner')!
@@ -121,7 +122,7 @@ describe('family-line inheritance and classification', () => {
         ...templatePartner,
         id: 'vidal-origin',
         displayName: 'Marco Vidal',
-        lineageSurname: 'Vidal',
+        lineageSurname: 'Vidal-Probe',
         gender: 'male',
         portraitNumber: 996,
         portrait: 'portraits/996.png',
@@ -148,7 +149,7 @@ describe('family-line inheritance and classification', () => {
         ...templateChild,
         id: 'vidal-line-child',
         displayName: 'Jordan Vidal',
-        lineageSurname: 'Vidal',
+        lineageSurname: 'Vidal-Probe',
         gender: 'unknown',
         portraitNumber: 991,
         portrait: 'portraits/991.png',
@@ -157,7 +158,7 @@ describe('family-line inheritance and classification', () => {
         ...templateChild,
         id: 'vidal-line-grandchild',
         displayName: 'Morgan Vidal',
-        lineageSurname: 'Vidal',
+        lineageSurname: 'Vidal-Probe',
         gender: 'unknown',
         portraitNumber: 992,
         portrait: 'portraits/992.png',
@@ -184,7 +185,7 @@ describe('family-line inheritance and classification', () => {
       },
     )
 
-    const result = classifyFamilyLine(data.people, data.families, 'Vidal')
+    const result = classifyFamilyLine(data.people, data.families, 'Vidal-Probe')
     expect(result.lineageOriginIds).toEqual(new Set(['vidal-origin']))
     expect(result.memberIds.has('vidal-origin')).toBe(true)
     expect(result.partnerIds.has(sullanoParent.id)).toBe(true)
@@ -271,9 +272,9 @@ describe('family-line inheritance and classification', () => {
     expect(sibling.people.at(-1)?.lineageSurname).toBe('Bering')
 
     const ambiguous = published()
-    const emptyFamily = ambiguous.families.find((family) => family.id === 'family-grandchild-5-2')!
+    const emptyFamily = ambiguous.families.find((family) => family.id === 'family-grandchild-5-1')!
     emptyFamily.parentIds.push('new-partner')
-    const child = addChild(ambiguous, 'grandchild-5-2', 'New child', emptyFamily.id)
+    const child = addChild(ambiguous, 'grandchild-5-1', 'New child', emptyFamily.id)
     expect(child.people.at(-1)?.lineageSurname).toBe('')
   })
 })

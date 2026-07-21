@@ -224,9 +224,9 @@ describe('published archive data', () => {
   it('keeps the renamed records and validates the current public version-6 archive', () => {
     const data = structuredClone(publishedArchive) as TreeData
     expect(data.version).toBe(6)
-    expect(data.people).toHaveLength(26)
-    expect(data.pets).toHaveLength(3)
-    expect(data.families).toHaveLength(9)
+    expect(data.people).toHaveLength(28)
+    expect(data.pets).toHaveLength(2)
+    expect(data.families).toHaveLength(12)
     expect(data.petFamilies).toHaveLength(1)
     expect(data.people.slice(0, 3).map((person) => person.displayName)).toEqual([
       'Nemisio Sullano',

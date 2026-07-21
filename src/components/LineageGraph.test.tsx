@@ -250,7 +250,7 @@ describe('LineageGraph family-line highlights', () => {
     fireEvent.keyDown(profileTrigger, { key: 'Escape' })
     fireEvent.click(lineageTrigger)
     expect(within(screen.getByRole('listbox', { name: 'Lineage path options' })).getAllByRole('option').map((option) => option.textContent?.replace('✓', ''))).toEqual([
-      'Set', 'Bering', 'Castaneda', 'Ermac', 'Sullano', 'Tayad',
+      'Set', 'Bering', 'Castaneda', 'Enares', 'Ermac', 'Sullano', 'Tayad', 'Vidal',
     ])
     fireEvent.pointerUp(screen.getByRole('button', { name: /Nemisio Sullano details/i }), { pointerType: 'mouse', button: 0 })
     expect(screen.getByLabelText('Nemisio Sullano details', { selector: 'aside' })).toHaveTextContent('Family lineSullano')
