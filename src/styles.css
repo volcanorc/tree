@@ -136,7 +136,10 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif; font-weight: 400; }
 .lineage-viewport:active { cursor: grabbing; }
 .lineage-viewport.is-locked, .lineage-viewport.is-locked:active { cursor: default; touch-action: pan-y; }
 .lineage-viewport:focus-visible { outline: 1px solid var(--copper); outline-offset: -2px; }
-.highlight-control { position: absolute; left: 12px; top: 12px; z-index: 95; width: 158px; display: grid; gap: 5px; padding: 8px 9px; border: 1px solid rgba(167,185,210,.18); border-radius: 4px; background: rgba(7,12,20,.9); box-shadow: 0 10px 30px rgba(0,0,0,.34); color: #738096; font-size: .54rem; letter-spacing: .12em; text-transform: uppercase; cursor: default; }
+.highlight-control { position: absolute; left: 12px; top: 12px; z-index: 95; width: 172px; display: grid; gap: 8px; padding: 9px 10px 10px; border: 1px solid rgba(167,185,210,.18); border-radius: 4px; background: rgba(7,12,20,.94); box-shadow: 0 10px 30px rgba(0,0,0,.34); color: #738096; font-size: .54rem; letter-spacing: .12em; text-transform: uppercase; cursor: default; }
+.highlight-control-title { color: #9ca8b9; }
+.highlight-control label { display: grid; gap: 5px; cursor: default; }
+.highlight-control label > span { color: #738096; }
 .highlight-control select { min-height: 29px; padding: 5px 25px 5px 8px; border-color: rgba(200,131,85,.38); appearance: none; color-scheme: dark; background-color: #080e17; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23c88355' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-position: right 8px center; background-repeat: no-repeat; color: #c5ccd6; font-size: .65rem; letter-spacing: .06em; }
 .highlight-control select option, .highlight-control select optgroup { background: #080e17; color: #c5ccd6; }
 .lineage-canvas { position: absolute; min-height: 650px; transform-origin: top left; transition: transform 180ms cubic-bezier(.2,.75,.35,1); }

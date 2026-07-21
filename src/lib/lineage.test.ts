@@ -81,6 +81,35 @@ describe('family-line inheritance and classification', () => {
     expect(result.continuingChildIds.has('grandchild-2-2')).toBe(true)
   })
 
+  it('shows a female lineage origin through direct children without transmitting to grandchildren or another wife', () => {
+    const data = published()
+    const directChild = data.people.find((person) => person.id === 'grandchild-1-2')!
+    data.people.push({
+      ...directChild,
+      id: 'tayad-grandchild-probe',
+      displayName: 'Probe Sullano',
+      lineageSurname: 'Sullano',
+      portraitNumber: 999,
+      portrait: 'portraits/999.png',
+    })
+    data.families.push({
+      id: 'tayad-descendant-family',
+      parentIds: ['grandchild-1-2'],
+      children: [{ personId: 'tayad-grandchild-probe', birthOrder: 1 }],
+    })
+
+    const result = classifyFamilyLine(data.people, data.families, 'Tayad')
+    expect(result.femaleOriginIds).toEqual(new Set(['new-partner']))
+    expect(result.memberIds.has('new-partner')).toBe(true)
+    expect(result.partnerIds.has('child-1')).toBe(true)
+    expect(result.originChildIds).toEqual(new Set(['grandchild-1-2', 'grandchild-1-3', 'grandchild-1-4']))
+    expect(result.continuingFamilyIds.has('family-child-1')).toBe(true)
+    expect(result.memberIds.has('tayad-grandchild-probe')).toBe(false)
+    expect(result.continuingFamilyIds.has('tayad-descendant-family')).toBe(false)
+    expect(result.memberIds.has('new-child')).toBe(false)
+    expect(result.continuingFamilyIds.has('family-child-1-2')).toBe(false)
+  })
+
   it('uses reached carriers, then a unique male, then stable parent order', () => {
     const data = published()
     const root = classifyFamilyLine(data.people, data.families, 'Sullano')

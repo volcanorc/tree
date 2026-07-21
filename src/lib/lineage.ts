@@ -80,6 +80,8 @@ export interface FamilyLineClassification {
   carrierByFamilyId: Map<string, string>
   continuingChildIds: Set<string>
   continuingFamilyIds: Set<string>
+  femaleOriginIds: Set<string>
+  originChildIds: Set<string>
 }
 
 export function classifyFamilyLine(
@@ -112,6 +114,8 @@ export function classifyFamilyLine(
 
   const continuingChildIds = new Set<string>()
   const continuingFamilyIds = new Set<string>()
+  const femaleOriginIds = new Set<string>()
+  const originChildIds = new Set<string>()
   const partnerCandidates = new Set<string>()
   carrierByFamilyId.forEach((carrierId, familyId) => {
     const family = families.find((candidate) => candidate.id === familyId)
@@ -123,10 +127,35 @@ export function classifyFamilyLine(
         continuingFamilyIds.add(family.id)
       }
     })
+    const matchingParents = family.parentIds.filter((id) => matchingIds.has(id))
+    const carrier = byId.get(carrierId)
+    const isFemaleOrigin = matchingParents.length === 1
+      && carrier?.gender === 'female'
+      && !reachedAsChild.has(carrierId)
+    if (isFemaleOrigin) {
+      femaleOriginIds.add(carrierId)
+      family.children.forEach((child) => {
+        if (matchingIds.has(child.personId)) return
+        originChildIds.add(child.personId)
+        continuingChildIds.add(child.personId)
+        continuingFamilyIds.add(family.id)
+      })
+    }
   })
 
   const establishedCarrierIds = new Set([...carrierByFamilyId.values(), ...reachedAsChild])
   const partnerIds = new Set([...partnerCandidates].filter((id) => !establishedCarrierIds.has(id)))
-  const memberIds = new Set([...matchingIds].filter((id) => !partnerIds.has(id)))
-  return { memberIds, partnerIds, carrierByFamilyId, continuingChildIds, continuingFamilyIds }
+  const memberIds = new Set([
+    ...[...matchingIds].filter((id) => !partnerIds.has(id)),
+    ...originChildIds,
+  ])
+  return {
+    memberIds,
+    partnerIds,
+    carrierByFamilyId,
+    continuingChildIds,
+    continuingFamilyIds,
+    femaleOriginIds,
+    originChildIds,
+  }
 }

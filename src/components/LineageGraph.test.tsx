@@ -229,26 +229,53 @@ describe('LineageGraph details and portraits', () => {
 })
 
 describe('LineageGraph family-line highlights', () => {
-  it('offers alphabetical people-only family lines and explains the selected profile line', async () => {
+  it('offers separate alphabetical people-only lineage paths and explains the selected profile line', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { unmount } = renderGraph(data)
-    const select = screen.getByRole('combobox', { name: 'Highlight profiles' })
-    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'Set', 'Dead', 'Alive', 'Male', 'Female',
-      'Family · Bering', 'Family · Castaneda', 'Family · Ermac', 'Family · Sullano', 'Family · Tayad',
+    const profileSelect = screen.getByRole('combobox', { name: 'Status and gender highlight' })
+    const lineageSelect = screen.getByRole('combobox', { name: 'Lineage path' })
+    expect(within(profileSelect).getAllByRole('option').map((option) => option.textContent)).toEqual(['Set', 'Dead', 'Alive', 'Male', 'Female'])
+    expect(within(lineageSelect).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Set', 'Bering', 'Castaneda', 'Ermac', 'Sullano', 'Tayad',
     ])
     fireEvent.pointerUp(screen.getByRole('button', { name: /Nemisio Sullano details/i }), { pointerType: 'mouse', button: 0 })
     expect(screen.getByLabelText('Nemisio Sullano details', { selector: 'aside' })).toHaveTextContent('Family lineSullano')
 
     unmount()
     renderGraph(data, 'pets')
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Set', 'Dead', 'Alive', 'Male', 'Female'])
+    expect(screen.getByRole('combobox', { name: 'Status and gender highlight' })).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Lineage path' })).not.toBeInTheDocument()
+  })
+
+  it('keeps profile and lineage filters mutually exclusive without coupling their Set choices', () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    const profileSelect = screen.getByRole('combobox', { name: 'Status and gender highlight' })
+    const lineageSelect = screen.getByRole('combobox', { name: 'Lineage path' })
+
+    fireEvent.change(profileSelect, { target: { value: 'male' } })
+    expect(profileSelect).toHaveValue('male')
+    expect(lineageSelect).toHaveValue('set')
+    fireEvent.change(lineageSelect, { target: { value: 'set' } })
+    expect(profileSelect).toHaveValue('male')
+
+    fireEvent.change(lineageSelect, { target: { value: 'sullano' } })
+    expect(profileSelect).toHaveValue('set')
+    expect(lineageSelect).toHaveValue('sullano')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-lineage')
+    fireEvent.change(profileSelect, { target: { value: 'set' } })
+    expect(lineageSelect).toHaveValue('sullano')
+
+    fireEvent.change(profileSelect, { target: { value: 'female' } })
+    expect(profileSelect).toHaveValue('female')
+    expect(lineageSelect).toHaveValue('set')
+    expect(container.querySelector('.lineage-section')).toHaveClass('highlight-female')
   })
 
   it('classifies Sullano members, introduced partners, stopped branches, and split connectors', async () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Highlight profiles' }), { target: { value: 'lineage:sullano' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'sullano' } })
 
     expect(container.querySelector('[data-entity-id="father"]')).toHaveAttribute('data-lineage-role', 'member')
     expect(container.querySelector('[data-entity-id="mother"]')).toHaveAttribute('data-lineage-role', 'partner')
@@ -268,10 +295,33 @@ describe('LineageGraph family-line highlights', () => {
   it('reverse-filters Bering with its parent green and Sullano partner pink', () => {
     const data = structuredClone(publishedArchive) as TreeData
     const { container } = renderGraph(data)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Highlight profiles' }), { target: { value: 'lineage:bering' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'bering' } })
     expect(container.querySelector('[data-entity-id="new-partner-5"]')).toHaveAttribute('data-lineage-role', 'member')
     expect(container.querySelector('[data-entity-id="child-2"]')).toHaveAttribute('data-lineage-role', 'partner')
     expect(container.querySelector('[data-entity-id="grandchild-2-1"]')).toHaveAttribute('data-lineage-role', 'member')
+  })
+
+  it('shows a female-origin Tayad path for direct children only and isolates the second-wife branch', async () => {
+    const data = structuredClone(publishedArchive) as TreeData
+    const { container } = renderGraph(data)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Lineage path' }), { target: { value: 'tayad' } })
+
+    expect(container.querySelector('[data-entity-id="new-partner"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="child-1"]')).toHaveAttribute('data-lineage-role', 'partner')
+    expect(container.querySelector('[data-entity-id="grandchild-1-2"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="grandchild-1-3"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="grandchild-1-4"]')).toHaveAttribute('data-lineage-role', 'member')
+    expect(container.querySelector('[data-entity-id="new-partner-2"]')).toHaveAttribute('data-lineage-role', 'none')
+    expect(container.querySelector('[data-entity-id="new-child"]')).toHaveAttribute('data-lineage-role', 'none')
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-family-connector="family-child-1"][data-source-parent-id="new-partner"]')).toHaveAttribute('data-lineage-path-role', 'carrier')
+      expect(container.querySelector('[data-family-connector="family-child-1"][data-source-parent-id="child-1"]')).toHaveAttribute('data-lineage-path-role', 'partner')
+      expect(container.querySelector('[data-family-connector="family-child-1"][data-connector-kind="family-stem"]')).toHaveAttribute('data-lineage-path-role', 'carrier')
+      expect(container.querySelector('[data-family-connector="family-child-1"][data-child-id="grandchild-1-2"]')).toHaveAttribute('data-lineage-path-role', 'carrier')
+      expect(container.querySelector('[data-family-connector="family-child-1-2"][data-connector-kind="family-stem"]')).toHaveAttribute('data-lineage-path-role', 'black')
+      expect(container.querySelector('[data-family-connector="family-child-1-2"][data-child-id="new-child"]')).toHaveAttribute('data-lineage-path-role', 'black')
+    })
   })
 })
 
@@ -427,7 +477,7 @@ describe('LineageGraph highlights and archive actions', () => {
     const { container } = renderGraph(data)
     const viewport = screen.getByTestId('lineage-viewport')
     const canvas = screen.getByTestId('lineage-canvas')
-    const selector = screen.getByLabelText('Highlight profiles')
+    const selector = screen.getByLabelText('Status and gender highlight')
     const control = selector.closest<HTMLElement>('.highlight-control')!
     expect(selector).toHaveValue('set')
     expect(viewport).toContainElement(control)
@@ -450,7 +500,7 @@ describe('LineageGraph highlights and archive actions', () => {
 
   it('keeps active gold and owner-target states separate from filter matching', async () => {
     const { container } = renderGraph(fresh(), 'people', { focusRequest: { entityId: 'father', requestId: 91 } })
-    fireEvent.change(screen.getByLabelText('Highlight profiles'), { target: { value: 'alive' } })
+    fireEvent.change(screen.getByLabelText('Status and gender highlight'), { target: { value: 'alive' } })
     const father = screen.getByRole('button', { name: /Father details.*navigation target/i })
     expect(father).toHaveClass('is-owner-target')
     fireEvent.pointerUp(father, { pointerType: 'mouse', button: 0 })
@@ -462,7 +512,7 @@ describe('LineageGraph highlights and archive actions', () => {
   it('applies the same status and gender filters to pet portraits', () => {
     const data = fresh()
     const { container } = renderGraph(data, 'pets')
-    const selector = screen.getByLabelText('Highlight profiles')
+    const selector = screen.getByLabelText('Status and gender highlight')
     const iring = container.querySelector('[data-entity-id="iring-brown"]')
 
     fireEvent.change(selector, { target: { value: 'dead' } })
@@ -710,7 +760,7 @@ describe('LineageGraph owner navigation', () => {
 describe('LineageGraph viewport controls', () => {
   it('gates public interaction without intercepting page wheel input', () => {
     const onOpenMap = vi.fn()
-    const { container } = renderGraph(fresh(), 'people', { interactionLocked: true, onOpenMap })
+    const { container } = renderGraph(structuredClone(publishedArchive) as TreeData, 'people', { interactionLocked: true, onOpenMap })
     const viewport = screen.getByTestId('lineage-viewport')
     const canvas = screen.getByTestId('lineage-canvas')
     const before = canvas.style.transform
@@ -722,7 +772,8 @@ describe('LineageGraph viewport controls', () => {
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reset and fit graph' })).toBeDisabled()
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Highlight profiles"]')).toBeDisabled()
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Status and gender highlight"]')).toBeDisabled()
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Lineage path"]')).toBeDisabled()
 
     const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -300, clientX: 120, clientY: 100 })
     viewport.dispatchEvent(wheel)

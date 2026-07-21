@@ -95,7 +95,7 @@ interface LineageGraphProps {
   onToggleFullscreen?: (trigger?: HTMLElement) => void
 }
 
-type HighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female' | `lineage:${string}`
+type ProfileHighlightFilter = 'set' | 'dead' | 'alive' | 'male' | 'female'
 type FamilyLineProfileRole = 'member' | 'partner' | 'none'
 
 interface HoverState {
@@ -1033,7 +1033,8 @@ export function LineageGraph({
   const [interacting, setInteracting] = useState(false)
   const [programmaticFocus, setProgrammaticFocus] = useState(false)
   const [dismissedFocusRequestId, setDismissedFocusRequestId] = useState<number | null>(null)
-  const [highlightFilter, setHighlightFilter] = useState<HighlightFilter>('set')
+  const [profileHighlightFilter, setProfileHighlightFilter] = useState<ProfileHighlightFilter>('set')
+  const [lineagePathFilter, setLineagePathFilter] = useState('set')
   useEffect(() => { viewRef.current = view }, [view])
 
   useEffect(() => {
@@ -1062,7 +1063,7 @@ export function LineageGraph({
     [mode, families, petFamilies],
   )
   const availableFamilyLines = useMemo(() => mode === 'people' ? familyLineOptions(people) : [], [mode, people])
-  const selectedFamilyLine = highlightFilter.startsWith('lineage:') ? highlightFilter.slice('lineage:'.length) : ''
+  const selectedFamilyLine = lineagePathFilter === 'set' ? '' : lineagePathFilter
   const familyLineClassification = useMemo<FamilyLineClassification | null>(
     () => mode === 'people' && selectedFamilyLine
       ? classifyFamilyLine(people, families, selectedFamilyLine)
@@ -1480,7 +1481,7 @@ export function LineageGraph({
   }
 
   return (
-    <section className={`lineage-section ${selectedFamilyLine ? 'highlight-lineage' : `highlight-${highlightFilter}`}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
+    <section className={`lineage-section ${selectedFamilyLine ? 'highlight-lineage' : `highlight-${profileHighlightFilter}`}`} aria-label={mode === 'people' ? 'Interactive family tree' : 'Interactive pet lineage'}>
       <div className="graph-toolbar">
         <span>{mode === 'people' ? 'Family' : 'Pets'} · drag, scroll, or pinch to explore</span>
         <div>
@@ -1514,23 +1515,48 @@ export function LineageGraph({
           setView((current) => ({ ...current, x: current.x + movement.x, y: current.y + movement.y }))
         }}
       >
-        <label className="highlight-control" aria-hidden={interactionLocked || undefined} onPointerDown={(event) => event.stopPropagation()}>
-          <span>Highlight</span>
-          <select value={highlightFilter} onChange={(event) => setHighlightFilter(event.target.value as HighlightFilter)} aria-label="Highlight profiles" disabled={interactionLocked}>
-            <option value="set">Set</option>
-            <option value="dead">Dead</option>
-            <option value="alive">Alive</option>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-            {mode === 'people' && availableFamilyLines.length > 0 && (
-              <optgroup label="Family lines">
+        <div className="highlight-control" aria-hidden={interactionLocked || undefined} onPointerDown={(event) => event.stopPropagation()}>
+          <span className="highlight-control-title">Highlight</span>
+          <label>
+            <span>Status &amp; gender</span>
+            <select
+              value={profileHighlightFilter}
+              onChange={(event) => {
+                const value = event.target.value as ProfileHighlightFilter
+                setProfileHighlightFilter(value)
+                if (value !== 'set') setLineagePathFilter('set')
+              }}
+              aria-label="Status and gender highlight"
+              disabled={interactionLocked}
+            >
+              <option value="set">Set</option>
+              <option value="dead">Dead</option>
+              <option value="alive">Alive</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </label>
+          {mode === 'people' && availableFamilyLines.length > 0 && (
+            <label>
+              <span>Lineage path</span>
+              <select
+                value={lineagePathFilter}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setLineagePathFilter(value)
+                  if (value !== 'set') setProfileHighlightFilter('set')
+                }}
+                aria-label="Lineage path"
+                disabled={interactionLocked}
+              >
+                <option value="set">Set</option>
                 {availableFamilyLines.map((option) => (
-                  <option value={`lineage:${option.key}`} key={option.key}>Family · {option.label}</option>
+                  <option value={option.key} key={option.key}>{option.label}</option>
                 ))}
-              </optgroup>
-            )}
-          </select>
-        </label>
+              </select>
+            </label>
+          )}
+        </div>
         <div className="lineage-canvas" data-testid="lineage-canvas" ref={canvasRef} inert={interactionLocked || undefined} aria-hidden={interactionLocked || undefined} style={{ width: canvasWidth, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="connector-layer" aria-hidden="true">
             {paths.map((path) => (
